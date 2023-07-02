@@ -1,0 +1,14 @@
+[
+    {
+        "type": "about",
+        "description": [
+            "The Z-Machine"
+        ]
+    },
+    {
+        "type": "compile",
+        "local": "src/main.gs",
+        "target": "~/bin/zmachine"
+    }
+
+]
