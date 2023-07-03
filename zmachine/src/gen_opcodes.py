@@ -19,17 +19,27 @@ import sys
 import re
 
 
+# Turn the opcode into the opcode loading format.
+# It's based on the operand type:
+# $$00 - Large constant (0 to 65535) (2 byte operand length)
+# $$01 - Small constant (0 to 255) (1 byte operand length)
+# $$10 - Variable reference (1 byte)
+# $$11 - omitted (0 bytes)
+# 3 means a variable number of operands (0-4)
+# 4 means double variable number of operands (0-8)
 ARG_TYPE_ID_LOOKUP = {
-    "": 0,
-    "S": 1,
-    "L": 2,
-    "V": 3,
-    "S,S": 4,
-    "S,V": 5,
-    "V,S": 6,
-    "V,V": 7,
-    "?": 8,
-    "E": 9,
+    "": "[]",
+    "S": "[1]",
+    "L": "[0]",
+    "V": "[2]",
+    "S,S": "[1, 1]",
+    "S,V": "[1, 2]",
+    "V,S": "[2, 1]",
+    "V,V": "[2, 2]",
+    "?": "[3]",
+    "E": "[3]",
+    # only call_vs2, call_vn2, which can have up to 8 operands.
+    "call": "[4]",
 }
 
 MNEMONIC_MATCH = re.compile(r"[^[]+\[\`\*([^*]+)\*\`\]\s*(.*)")
@@ -67,6 +77,10 @@ class LookupRow:
         mnemonic_raw: str,
         usage: List[str],
     ) -> None:
+        # Very special form.  These two calls can have up to 8 operands.
+        if mnemonic_raw in ("call_vs2", "call_vn2") and args == "?":
+            args = "call"
+
         self.opcode_type = opcode_type
         self.opcode_number = opcode_number
         self.opcode_byte = opcode_byte

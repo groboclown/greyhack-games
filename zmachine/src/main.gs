@@ -1,11 +1,16 @@
 // Main game.
 
 import_code("logging.gs")
+import_code("loadstory.gs")
 import_code("zscii_unicode.gs")
 import_code("opcodes_list.gs")
 import_code("machine.gs")
 import_code("screen.gs")
-import_code("loadstory.gs")
+import_code("opcodes_v3.gs")
+import_code("opcodes_v4.gs")
+import_code("opcodes_v5.gs")
+import_code("opcodes_v7.gs")
+import_code("interpreter.gs")
 import_code("native.gs")
 
 
@@ -28,21 +33,17 @@ main = function(args)
         exit("Could not find story file " + filename)
     end if
 
-    logger = Logger.New("main")
-    logger.Debug("Loading story")
-    
     story = FileLoader.A85Reader(storyFile.get_content)
     if story == null then
         exit("Failed to decode Ascii85 encoded file " + storyFile.path)
     end if
 
     native = Native.New(80, 20)
-    logger.Debug("Reading into memory")
-    state = MachineState.New(story, native)
-    logger.Debug("Dumping story")
-    for line in state.DumpStr()
-        print(line)
-    end for
+    interpreter = Interpreter.New(story, native)
+    completed = false
+    while not completed
+        completed = interpreter.Run()
+    end while
 end function
 
 if locals == globals then main(params)

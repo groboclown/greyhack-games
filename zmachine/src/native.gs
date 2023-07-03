@@ -52,6 +52,16 @@ Native.New = function(width, height)
     return ret
 end function
 
+// Reset Set the internal settings as though a game "restart" happened.
+Native.Reset = function()
+    self.Stream2Filename = null
+    self.Stream2File = null
+    self.inputStream = 0
+    self.cursorRow = -1
+    self.cursorColumn = -1
+    self.terminatingChars = [""]
+end function
+
 // SetZsciiUnicodeTable Set the zscii code -> unicode table
 Native.SetZsciiUnicodeTable = function(table)
     self.zsciiSpecialUnicode = {}

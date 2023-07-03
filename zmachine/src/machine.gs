@@ -142,14 +142,11 @@ MachineState.New = function(storyData, native)
     else if version > 7 then
         ret.packedAddressMult = 8
     end if
-    
-    // StartPCAddress Initial value of program counter (byte address)
-    //    Version 6+: Packed address of initial “main” routine
-    ret.StartPCAddress = (storyData[6] * 256) + storyData[7]
-    if version >= 6 then
-        // Stored as a packed routine address
-        ret.StartPCAddress = (ret.StartPCAddress * ret.packedAddressMult) + ret.routineOffset
-    end if
+
+    // StartPC Initial value of program counter
+    //    v1-5: byte address
+    //    v6+:  main routine (packed address)
+    ret.StartPC = (storyData[6] * 256) + storyData[7]
 
     // DictionaryAddress Location of dictionary (byte address)
     ret.DictionaryAddress = (storyData[8] * 256) + storyData[9]  // 0x08, 0x09
@@ -289,8 +286,8 @@ MachineState.New = function(storyData, native)
     // Stream 3 is a stack containing a map if {"address": 0, "buffer": []}
     ret.Stream3 = []
 
-    // Stream 4 is just user input
-    ret.Stream4 = null
+    // Stream 4 is just user input.  It's pushed to the native handler.
+    ret.Stream4Active = false
 
     // strings by memory address
     ret.cachedStrings = {}
@@ -299,12 +296,11 @@ MachineState.New = function(storyData, native)
     // Each value is map of { entry name: [address, index] }
     ret.cachedDictionaries = {}
 
-    // Initialize the table, based on the current version information.
+    // Initialize the zscii table, based on the current version information.
     ret.log.Debug("Initializing the zscii alphabet table")
+    ret.cachedAbbreviations = {}
     ret.zsciiAlphabetTableInit()
     native.SetZsciiUnicodeTable(ret.zsciiSpecialUnicode)
-
-    ret.cachedAbbreviations = {}
 
     return ret
 end function
@@ -317,80 +313,6 @@ MachineState.SaveState = function()
     //      "flags 2" is not saved. (offset 16, 17 / 0x10, 0x11
     // 2. 
     return ""
-end function
-
-// Dump Dump the memory of the data to a string, for debugging purposes.
-MachineState.DumpStr = function()
-    toHex = function(num, count=4)
-        if num == null then return "(null)"
-        H = "0123456789abcdef"
-        r = ""
-        for i in range(1, count)
-            r = H[num % 16] + r
-            num = floor(num / 16)
-        end for
-        return r
-    end function
-
-    if self.StatusLineType == null then
-        interpreterFlags = "(explicit display)"
-    else if self.StatusLineType == 0 then
-        interpreterFlags = "Display score/moves"
-    else if self.StatusLineType == 2 then
-        interpreterFlags = "Display hours:minutes"
-    end if
-    // StatusLineType The status line display done by the interpreter
-    //   == null - defined by story file
-    //   == 0 - score/turns
-    //   == 2 - hors:mins
-
-    ret = [
-        "    **** Story file header ****",
-        "Z-code version:           " + self.FileVersion,
-        "Interpreter flags:        " + interpreterFlags,
-        "Release number:           " + self.ReleaseNumber,
-        "Size of resident memory:  " + toHex(self.HighMemoryMark),
-        "Start PC:                 " + toHex(self.StartPCAddress),
-        "Routine Offset (v6+)      " + toHex(self.routineOffset, 8),
-        "String Offset (v6+)       " + toHex(self.stringOffset, 8),
-        "Dictionary address:       " + toHex(self.DictionaryAddress),
-        "Object table address:     " + toHex(self.ObjectTableAddress),
-        "Global variables address: " + toHex(self.GlobalVariablesTableAddress),
-        "Static memory address:    " + toHex(self.StaticMemoryBaseAddress),
-        //"Size of dynamic memory:   " + toHex(self.StaticMemoryBaseAddress), ??
-        "Game flags:               ()",
-        "Serial number:            " + self.SerialNumber,
-        "Abbreviations address:    " + toHex(self.AbbreviationsTableAddress),
-        "File size:                " + toHex(self.FileLen, 8),
-        "Checksum:                 " + toHex(self.Checksum),
-        "Alphabet table address:   " + toHex(self.AlphabetTableAddress),
-        "Terminating table address:" + toHex(self.TerminatingCharactersTableAddress),
-        "",
-        "    **** Abbreviations ****",
-        "",
-    ]
-    for index in self.cachedAbbreviations.indexes
-        ret.push("[" + index + "] '" + self.cachedAbbreviations[index] + "'")
-    end for
-
-    ret = ret + ["", "    **** Story file default dictionary ****", ""]
-    self.log.Debug("Generating the dictionary at " + toHex(self.DictionaryAddress))
-    dict = self.ParseDictionary(self.DictionaryAddress)
-    for index in dict.indexes
-        item = dict[index]
-        ret.push("  " + item[1] + " (" + toHex(item[0]) + ")  '" + index + "'")
-    end for
-
-    ret = ret + ["", "    **** Object 2 Information ****", ""]
-    data = self.GetObjectData(2)
-    ret = ret + [
-        "Object Id:    1",
-        "Object Name:  '" + self.GetObjectName(data) + "'",
-        "Parent Id:    " + self.GetObjectParent(data),
-        "Child Id:     " + self.GetObjectChild(data),
-        "Sibling Id:   " + self.GetObjectSibling(data),
-    ]
-    return ret
 end function
 
 // UpdateScreenRef Update the machine state to reflect changes to the output screen.
@@ -469,78 +391,6 @@ MachineState.SetGlobalVariable = function(variable, value)
     address = self.GlobalVariablesTableAddress + (variable * 2)
     self.dynamicMemory[address] = floor(variable / 256) % 256  // modulo should be not necessary.
     self.dynamicMemory[address + 1] = variable % 256
-end function
-
-// GetStackFrame Get the current stack frame
-//
-// Used by the "catch" opcode.
-MachineState.GetStackFrame = function()
-    return self.callStack.len - 1
-end function
-
-// JumpToStackFrame Long jump to a previous (or possibly current) call.
-MachineState.JumpToStackFrame = function(stackFrame)
-    if stackFrame < 0 or stackFrame >= self.callStack then exit("Invalid stack frame: " + stackFrame)
-    // stackFrame is the position of the stack.  So, if we want to get to
-    // stack position 2, then the length is 3.  Rather than creating a new object
-    // with 'stack = stack[:stackFrame]', we just pop the stack.
-    while self.callStack.len > stackFrame
-        self.callStack.pop()
-    end while
-end function
-
-// PopStackFrame Exit the current stack frame.
-//
-// Can never have fewer than 1 active stack frame.
-MachineState.PopStackFrame = function()
-    if self.callStack.len > 1 then
-        self.callStack.pop()
-    end if
-end function
-
-// EnterRoutine Enter a new routine by adding to the call stack.
-//
-// Routines are never in dynamic memory.
-MachineState.EnterRoutine = function(routine, arguments)
-    if routine == 0 then exit("Illegal state: routine 0 must be handled by caller.")
-    if self.FileVersion <= 3 and arguments.len > 3 then exit("Invalid argument count: " + arguments.len)
-    if self.FileVersion >= 4 and arguments.len > 7 then exit("Invalid argument count: " + arguments.len)
-
-    // Routine Packed Address Lookup
-    address = (routine * self.packedAddressMult) + self.routineOffset
-    if address < 0 or address > self.FileLen then exit("Invalid routine address " + routine + " -> " + address)
-    if address < self.StaticMemoryBaseAddress then exit("Tried calling routine in static memory area: " + address)
-
-    variableCount = self.storyData[address]
-    address = address + 1
-    // Initialize local variables
-    locals = []
-    if variableCount < arguments.len then exit("Too few local variables (" + variableCount + ") for argument count (" + arguments.len + ")")
-    for i in range(1, variableCount)
-        // Versions 5+, initial value for local variable is 0
-        val = 0
-        if self.FileVersion <= 4 then
-            // initial values in versions 1-4 is the 2-byte words after the count.
-            val = (self.storyData[address] * 256) + self.storyData[address]
-            address = address + 2
-        end if
-        locals.push(val)
-    end for
-
-    // The arguments are written into the local variables (argument 1 into local 1 and so on).
-    // It is legal for there to be more arguments than local variables (any spare arguments
-    // are thrown away) or for there to be fewer.
-    argCount = arguments.len
-    if arguments.len > variableCount then argCount = variableCount
-    for i in range(0, argCount - 1)
-        locals[i] = arguments[i]
-    end for
-
-    self.callStack.push({
-        "stack": [],
-        "pc": address,
-        "locals": locals,
-    })
 end function
 
 // FromByteAddress Convert a byte address to a physical address
@@ -636,7 +486,7 @@ MachineState.SetByte = function(physAddress, value)
         // In version 6, if bit 2 is cleared, then that means the game has
         // redrawn the screen.
 
-        // Ignore changing the other bits.
+        // Ignore any changes the game makes to the other bits.
 
         self.headerData[physAddress] = value
 
@@ -839,7 +689,7 @@ MachineState.SetObjectChild = function(objectValues, childId)
         self.SetWord(address + 10, parentIndex)
     end if
 end function
-    
+
 _FLAG_BIT_MASK = [
     128, // flag 0 == 0x80
     64,  // flag 1 == 0x40
@@ -851,6 +701,17 @@ _FLAG_BIT_MASK = [
     1,   // flag 7 == 0x01
 ]
 
+_FLAG_BIT_NOT_MASK = [
+    127,  // flag 0 == 0x80
+    191,  // flag 1 == 0x40
+    223,  // flag 2 == 0x20
+    239,  // flag 3 == 0x10
+    247,  // flag 4 == 0x08
+    251,  // flag 5 == 0x04
+    253,  // flag 6 == 0x02
+    254,  // flag 7 == 0x01
+]
+
 // IsObjectFlagSet Check if the flag index, from the object values returned by GetObjectData, is set.
 MachineState.IsObjectFlagSet = function(objectValues, flagIndex)
     byteIndex = floor(flagIndex / 8)
@@ -860,89 +721,103 @@ MachineState.IsObjectFlagSet = function(objectValues, flagIndex)
     return val != 0
 end function
 
+// SetObjectFlag Set the object's flag index, from the object values returned by GetObjectData.
+MachineState.SetObjectFlag = function(objectValues, flagIndex, enable)
+    byteIndex = floor(flagIndex / 8)
+    bitIndex = flagIndex % 8
+    if byteIndex < 0 or byteIndex >= objectValues[0].len then return
+    bit = 0
+    if enable then bit = _FLAG_BIT_MASK[bitIndex]
+    val = bitAnd(objectValues[0][byteIndex], _FLAG_BIT_NOT_MASK[bitIndex]) + bit
+    objectValues[0][byteIndex] = val
+    address = objectValues[5] + byteIndex
+    self.SetByte(address, val)
+    return val != 0
+end function
+
 // GetObjectName Get the short name of the object for the given opaque values.
 MachineState.GetObjectName = function(objectValues)
-    // Assume the "text" of the name is just a string, not zscii?
     if objectValues == null then return null
     propAddress = objectValues[4]
     // All versions start the table with the length byte, short name text.
     textLen = self.ReadByte(propAddress)
-    // return self.ReadString(propAddress + 1, textLen)
+    if textLen <= 0 then return "NoName"
+    // return self.ReadString(propAddress + 1, textLen * 2)
     return self.ReadString(propAddress + 1)
 end function
 
-// Each object has its own property table. Each of these can be anywhere in dynamic memory (indeed, a game can legally change an object’s properties table address in play, provided the new address points to another valid properties table). The header of a property table is as follows:
+// getFirstPropertyAddress Get the physical address for the first property of the opaque object.
+//
+// It's possible for the first property address to be the end-of-list marker.  The check if this
+// is the end-of-property is by calling getNextObjectProperty and checking if that is null, or
+// by calling isListEndPropertyAddress to see if that returns true.
+MachineState.getFirstPropertyAddress = function(objectValues)
+    if objectValues == null then return null
+    // Property table address
+    propAddress = objectValues[4]
+    nameLen = self.ReadByte(propAddress)
+    addr = propAddress + (nameLen * 2)
+    return addr
+end function
 
-// ----
-// text-length     text of short name of object
-// -----byte----   --some even number of bytes---
-// ----
+// getPropertyAddressInfo Get the property information for the property at the address.
+//
+// If the property is the end-of-property list marker, returns null.
+// Otherwise, returns [propertyNumber, dataSize, dataAddress, propertyAddress, nextPropertyAddress]
+MachineState.getPropertyAddressInfo = function(propertyAddress)
+    if propertyAddress == null then return null
+    if self.FileVersion <= 3 then
+        // Bits 7-5: length - 1
+        // Bits 4-0: property number. 0 means end of list.
+        val = self.ReadByte(propertyAddress)
+        propNum = val % 32
+        if propNum == 0 then return null  // EOL marker
+        // + 1 because the length bits need +1
+        propLen = (floor(val / 32) % 8) + 1
+        // + 1 to go past the argument's property's header byte.
+        return [propNum, propLen, propertyAddress + 1, propertyAddress, propertyAddress + propLen + 1]
+    end if
 
+    // Property block starts with either 1 or 2 bytes containing the size + number.
+    // If the first byte has the top bit (7) set, then:
+    //    byte 0: bits 5-0: property number
+    //            bits 7-6: 0b10
+    //    byte 1: bits 5-0: property data length (in bytes); == 0 means length == 64.
+    //            bit  6:   unused
+    //            bit  7:   always 1
+    // If the first byte has the top bit (7) unset, then:
+    //    byte 0: bits 5-0: property number
+    //            bit  6:   unset == data length of 1, set == data length 2.
+    //            bit  7:   always 0
+    val1 = self.ReadByte(propertyAddress)
+    propNum = val1 % 64  // bits 5-0
+    if propNum == 0 then return null
+    dataAddress = propertyAddress + 1
+    if val1 >= 128 then
+        // 2 byte header.
+        val2 = self.ReadByte(dataAddress)
+        dataAddress = dataAddress + 1
+        propLen = val2 % 64  // bits 5-0
+        if propLen == 0 then propLen = 64
+    else
+        propLen = 1
+        if bitAnd(val1, 64) != 0 then propLen = 2
+    end if
+    return [propNum, propLen, dataAddress, propertyAddress, dataAddress + propLen]
+end function
 
-// In Versions 1 to 3, each property is stored as a block
-
-// ----
-// size byte     the actual property data
-//             ---between 1 and 8 bytes--
-// ----
-
-// where the *size byte* is arranged as 32 times the number of data bytes minus one, plus the property number. A property list is terminated by a size byte of 0. (It is otherwise illegal for a size byte to be a multiple of 32.)
-
-// How to interpret the size byte
-// The “is arranged as” phrasing threw me for longer than I would like to admit. What this really means is that the value “data bytes minus one” has been left-shifted by 5 (i.e. multiplied by 32) and occupies the top three bits in the byte. The lower 5 bits contain the property number. That is:
-    
-// "Size" byte for a property
-// "7" "6" "5" "4" "3" "2" "1" "0"
-// "length - 1" (span 3)
-// "prop num" (span 5)
-//   
-// This also matches the “1–8 byte” range for the data; three bits can represent the values from 0 to 7, which yields 1 to 8 once you “add one” back to the length value.
-    
-// In Versions 4 and later, a property block instead has the form
-
-// ----
-// size and number       the actual property data
-// --1 or 2 bytes---     --between 1 and 64 bytes--
-// ----
-    
-// The property number occupies the bottom 6 bits of the first size byte.
-    
-// If the top bit (bit 7) of the first size byte is set, then there are two size-and-number bytes as follows. In the first byte, bits 0 to 5 contain the property number; bit 6 is undetermined (it is clear in all Infocom or Inform story files); bit 7 is set. In the second byte, bits 0 to 5 contain the property data length, counting in bytes; bit 6 is undetermined (it is set in Infocom story files, but clear in Inform ones); bit 7 is always set.
-    
-// *[1.0]* A value of 0 as property data length (in the second byte) should be interpreted as a length of 64. (Inform can compile such properties.)
-    
-// If the top bit (bit 7) of the first size byte is clear, then there is only one size-and-number byte. Bits 0 to 5 contain the property number; bit 6 is either clear to indicate a property data length of 1, or set to indicate a length of 2; bit 7 is clear.
-    
-// Size byte(s) in versions 4 and later
-// Again, showing the byte/bit variations helps make things more clear.
-    
-// With the high bit clear in the first byte:
-    
-// Single-byte size (high bit clear)
-// "7" "6" "5" "4" "3" "2" "1" "0"
-// "0" (span 1)
-// "length" (span 1)
-// "prop num" (span 6)
-    
-// where the actual data length is _length_+1 (resulting in either 1 or 2).
- 
-// With the high bit set in the first byte:
-    
-// Two-byte size (high bit set)
-// "7" "6" "5" "4" "3" "2" "1" "0" "7" "6" "5" "4" "3" "2" "1" "0"
-// "first byte"  (span 8)
-// "second byte" (span 8)
-//    
-// "1" (span 1)
-// "?" (span 1)
-// "prop num" (span 6)
-// "1" (span 1)
-// "?" (span 1)
-// "length" (span 6)
-
-// And in this case, rather than adding one to the length value, it is taken as-is _except_ a zero value is treated as 64 as per xref:#12_4_2_1_1[**S**12.4.2.1.1].
-
-
+// GetObjectProperty Get details of the object's property at the ID.
+//
+// Returns a map with [propNumber, dataSizeInBytes, dataAddress, and other stuff]
+MachineState.GetObjectProperty = function(objectValues, propertyId)
+    if objectValues == null then return null
+    propAddress = self.getFirstPropertyAddress(objectValues)
+    propInfo = self.getPropertyAddressInfo(propAddress)
+    while propInfo != null and propInfo[0] != propertyId
+        propInfo = self.getPropertyAddressInfo(propInfo[4])
+    end while
+    return propInfo
+end function
 
 // ====================================================================
 
@@ -1248,127 +1123,317 @@ end function
 // ====================================================================
 // Instruction loading
 
-MachineState.InstructionAt = function(physAddress)
-    // Read the opcode
-    opcode = self.storyData[physAddress]
-    physAddress = physAddress + 1
-    // operand value type 0 == constant
-    // operand value type 1 == top of the stack (value is meaningless)
-    // operand value type 2 == local variable
-    // operand value type 3 == global variable
-    operands = [] // list of [type, value]
-    operandCount = -1
-    allOperandTypes = 65535
+// StartGame setup the initial state of the game to allow execution to begin.
+MachineState.StartGame = function()
+    // Reset game changable data.
+    // For the header, only the flag 2 can be changed.
+    self.headerData[16] = 0  // 0x10
+    self.headerData[17] = 0  // 0x11
+    if self.UsesColors then
+        self.headerData[16] = 64
+    end if
+    self.headerExtensionData = {}
+    self.callStack = []
+    self.dynamicMemory = {}
 
-    if opcode == 190 and self.FileVersion >= 5 then // 0xbe
-        // extended opcode
-        operandCount = 4 // VAR; set to the maximum allowed
-        opcodeNumber = self.storyData[physAddress]
-        physAddress = physAddress + 1
-        allOperandTypes = self.storyData[physAddress]
-        physAddress = physAddress + 1
+    // Reset streams
+    // Stream 1 == screen
+    self.Stream1Active = true
+    // Stream 2 == transcript
+    self.Stream2Active = false
+    // Stream 3 == dynamic memory table
+    self.Stream3 = []
+    // Stream 4 == user input
+    self.Stream4Active = false
+
+    // Reset the other objects
+    self.native.Reset()
+    self.screen.Reset()
+    if self.StatusLineType == 0 then
+        self.screen.IsInterpreterStatusLine = true
+        self.screen.IsInterpreterScore = true
+        self.screen.IsInterpreter24HourTime = false
+    else if self.StatusLineType == 2 then
+        self.screen.IsInterpreterStatusLine = true
+        self.screen.IsInterpreterScore = false
+        self.screen.IsInterpreter24HourTime = true
     end if
 
-    form = floor(opcode / 64) % 4 // bits 7 & 6
-    if form == 3 then // 0b11
-        // variable
-        allOperandTypes = self.storyData[physAddress]
-        physAddress = physAddress + 1
-
-        if floor(opcode / 32) % 2 == 0 then // bit 5
-            operandCount = 2
-        else
-            operandCount = 4 // VAR; set to the maximum allowed
-        end if
-        opcodeNumber = opcode % 32 // bits 4-0
-    else if form == 2 then // 0b10
-        // short
-        operand1Type = floor(opcode / 16) % 4 // bits 5-4
-        // operand count can be 0 if the type == 0b11,
-        // but in that situation, it won't be hit in the extraction phase.
-        operandCount = 1
-        allOperandTypes = 252 + operand1Type // mark all upper bits as 1 to omit them
-        opcodeNumber = opcode % 16 // bits 3-0
+    // Set up the initial call stack.
+    if self.FileVersion >= 6 then
+        self.EnterRoutine(self.StartPC, [])
     else
-        // long
-        operandCount = 2
-        allOperandTypes = 240 // mark upper 4 bits as 1 to omit them
-
-        operand1Type = floor(opcode / 64) % 2 // bit 6
-        if operand1Type == 0 then
-            // == 0 -> small constant
-            allOperandTypes = allOperandTypes + 4 // 0b01, bits 3-2
-        else if operand1Type == 1 then
-            // == 1 -> variable
-            allOperandTypes = allOperandTypes + 8 // 0b10, bits 3-2
-        end if
-        operand2Type = floor(opcode / 32) % 2 // bit 5
-        if operand2Type == 0 then
-            // == 0 -> small constant
-            allOperandTypes = allOperandTypes + 1 // 0b01, bits 1-0
-        else if operand2Type == 1 then
-            // == 1 -> variable
-            allOperandTypes = allOperandTypes + 2 // 0b10, bits 1-0
-        end if
-
-        opcodeNumber = opcode % 32 // bits 4-0
+        // It's just a position, not considered a routine.
+        self.callStack.push({
+            "stack": [],
+            "pc": self.StartPC,
+            "locals": [],
+        })
     end if
-    // Read the operands
+end function
 
-    // The operand type is encoded in the 4 two-bit pairs,
-    // operand 1, bits 7-6
-    // operand 2, bits 5-4
-    // operand 3, bits 3-2
-    // operand 4, bits 1-0
-    // type 0: small constant
-    // type 1: variable
-    // type 2: large constant
-    // type 3: omitted (no operand)
+// GetStackFrame Get the current stack frame (the index)
+//
+// Used by the "catch" opcode.
+MachineState.GetStackFrame = function()
+    return self.callStack.len - 1
+end function
 
-    bitPair = 64
-    for loop in range(1, 4)
-        opType = (allOperandTypes / bitPair) % 4
-        if opType == 0 then
-            // large constant, 0-65535
-            operands.push([0, (self.storyData[physAddress] * 256) + self.storyData[physAddress + 1]])
-            physAddress = physAddress + 2
-            operandCount = operandCount - 1
-        else if opType == 1 then
-            // small constant
-            // 1 byte, 0 - 255
-            operands.push([0, self.storyData[physAddress]])
-            physAddress = physAddress + 1
-            operandCount = operandCount - 1
-        else if opType == 2 then
-            // variable
+// JumpToStackFrame Long jump to a previous (or possibly current) call.
+MachineState.JumpToStackFrame = function(stackFrame)
+    if stackFrame < 0 or stackFrame >= self.callStack then exit("Invalid stack frame: " + stackFrame)
+    // stackFrame is the position of the stack.  So, if we want to get to
+    // stack position 2, then the length is 3.  Rather than creating a new object
+    // with 'stack = stack[:stackFrame]', we just pop the stack.
+    while self.callStack.len > stackFrame
+        self.callStack.pop()
+    end while
+end function
 
-    // operand value type 1 == top of the stack (value is meaningless)
-    // operand value type 2 == local variable
-    // operand value type 3 == global variable
+// PopStackFrame Exit the current stack frame.
+//
+// Can never have fewer than 1 active stack frame.
+MachineState.PopStackFrame = function()
+    if self.callStack.len > 1 then
+        self.callStack.pop()
+    end if
+end function
 
-            variable = self.storyData[physAddress]
-            physAddress = physAddress + 1
-            if variable == 0 then
-                // top of the stack
-                operands.push([1, 0])
-            else if variable < 16 then // 0x01 - 0x0f
-                // local variable
-                operands.push([2, variable - 1])
-            else // 0x10 - 0xff
-                // global variable
-                operands.push([3, variable - 16])
-            end if
+// EnterRoutine Enter a new routine by adding to the call stack.
+//
+// Routines are never in dynamic memory.
+MachineState.EnterRoutine = function(routine, arguments)
+    if routine == 0 then exit("Illegal state: routine 0 must be handled by caller.")
+    if self.FileVersion <= 3 and arguments.len > 3 then exit("Invalid argument count: " + arguments.len)
+    if self.FileVersion >= 4 and arguments.len > 7 then exit("Invalid argument count: " + arguments.len)
 
-        // else if opType == 3 then
-        // no operand
+    // Routine Packed Address Lookup
+    address = (routine * self.packedAddressMult) + self.routineOffset
+    if address < 0 or address > self.FileLen then exit("Invalid routine address " + routine + " -> " + address)
+    if address < self.StaticMemoryBaseAddress then exit("Tried calling routine in static memory area: " + address)
+
+    variableCount = self.storyData[address]
+    address = address + 1
+    // Initialize local variables
+    locals = []
+    if variableCount < arguments.len then exit("Too few local variables (" + variableCount + ") for argument count (" + arguments.len + ")")
+    for i in range(1, variableCount)
+        // Versions 5+, initial value for local variable is 0
+        val = 0
+        if self.FileVersion <= 4 then
+            // initial values in versions 1-4 is the 2-byte words after the count.
+            val = (self.storyData[address] * 256) + self.storyData[address]
+            address = address + 2
         end if
-
-        if operandCount <= 0 then break
-        bitPair = floor(bitPair / 4)
+        locals.push(val)
     end for
 
-    // "call_vs2" and "call_vn2" can have > 4 operands, <= 8...
-    // "store" instructions (e.g. mul) include a following operand
-    //   which is the variable number to store the value.
+    // The arguments are written into the local variables (argument 1 into local 1 and so on).
+    // It is legal for there to be more arguments than local variables (any spare arguments
+    // are thrown away) or for there to be fewer.
+    argCount = arguments.len
+    if arguments.len > variableCount then argCount = variableCount
+    for i in range(0, argCount - 1)
+        locals[i] = arguments[i]
+    end for
 
+    self.callStack.push({
+        "stack": [],
+        "pc": address,
+        "locals": locals,
+    })
+end function
+
+// Move the current stack frame's instruction pointer to the given address.
+MachineState.JumpToAddress = function(physAddress)
+    self.callStack[-1].pc = physAddress
+end function
+
+// NextInstruction Get the next instruction in the current stack frame.
+//
+// Does not advance the current instruction pointer.
+MachineState.NextInstruction = function()
+    if self.callStack.len <= 0 then exit("No call stack frame")
+    return self.instructionAt(self.callStack[-1].pc, STD_OPCODE_TABLE, EXT_OPCODE_TABLE)
+end function
+
+// getInstructionAt Read the instruction at the given address.
+//
+// Returns [opcodeName, operandsList, nextInstructionAddress, storedValue (maybe null), branchValue (maybe null)]
+// If the opcode isn't found, then opcodeName is null.  If the opcode is invalid, null is returned.
+// The operand is either {"c": constantNumber, "t": "c"} or {"v": variable reference, "t": "v"}.
+// If a branch value is returned, then it is either {"r": return value, "t": "r"} or {"a": jump address, "t": "a"},
+// and it will also include the "b" value to mean branch-on (value - either true or false).
+//
+// The opcode lists are the opcodes_list contents.  This is an array of per-version information, each item
+// containing [introduced version number, mnemonic, operands type id, stores value?, branches?]
+MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeList)
+    // Note: instructions should be only in static memory.
+    // This gives us a touch of performance boost.
+    if physAddress < self.StaticMemoryBaseAddress then exit("Tried to run instruction in dynamic memory " + physAddress)
+
+    self.log.Debug("Loading instruction at " + physAddress)
+    val1 = self.storyData[physAddress]
+    self.log.Trace("  - opcode " + val1)
+    physAddress = physAddress + 1
+    ops = opcodeList
+    if self.FileVersion >= 5 and val1 == 190 then
+        // extended opcodes.
+        ops = extendedOpcodeList
+        val1 = self.storyData[physAddress]
+        self.log.Trace("  - extended opcode " + val1)
+        physAddress = physAddress + 1
+    end if
+    if val1 < 0 or val1 >= ops.len then
+        self.log.Warn("Discovered unknown opcode " + val1)
+        return null
+    end if
+    opTypeVersionList = ops[val1]
+
+    // Find the version compatible opcode
+    // These are sorted by version introduced, so that you loop through them until
+    // the story version is >= the opcode version.
+    opCodeInfo = null
+    for oci in opTypeVersionList
+        if self.FileVersion >= oci[0] then
+            opCodeInfo = oci
+            break
+        end if
+    end for
+    if opCodeInfo == null then
+        self.log.Warn("Discovered incompatible opcode " + val1)
+        return null
+    end if
+
+    opcodeMnemonic = opCodeInfo[1]
+    self.log.Trace("  - [" + opcodeMnemonic + "]")
+
+    // Load operands.
+    // Operand type code is a list of each operand type,
+    // possibly with variable number of operand descriptions.
+    operandTypeCodeList = opCodeInfo[2]
+    // If it's variable number, then handle those specially.
+    if operandTypeCodeList.len == 1 and operandTypeCodeList[0] >= 3 then
+        // In variable or extended forms, a byte of 4 operand types is given next.
+        // This contains 4 2-bit fields: bits 6 and 7 are the first field, bits 0 and 1
+        // the fourth. The values are operand types as above. Once one type has been given as
+        // 'omitted' all subsequent ones must be. Example: $$00101111 means large constant
+        // followed by variable (and no third or fourth opcode).
+        operandTypeIds = [self.storyData[physAddress]]
+        physAddress = physAddress + 1
+
+        if operandTypeCodeList[0] == 4 then
+            // In the special case of the “double variable” VAR opcodes call_vs2 and call_vn2
+            // (opcode numbers 12 and 26), a second byte of types is given, containing the types
+            // for the next four operands.
+            operandTypeIds.push(self.storyData[physAddress])
+            physAddress = physAddress + 1
+        end if
+
+        // Set it to a fresh list based on what's in the opcode description.
+        operandTypeCodeList = []
+        for typeId in operandTypeIds
+            idx = 64
+            while idx >= 1
+                // This will set the type code to 3 on omitted, which is fine.
+                operandTypeCodeList.push(floor(typeId / idx) % 4)
+                idx = floor(idx / 2)
+            end while 
+        end for
+    end if
+
+    operands = []
+    for operandTypeCode in operandTypeCodeList
+        if operandTypeCode == 0 then
+            // Large constant; 2 byte operand.
+            operands.push({"t": "c", "c": (self.storyData[physAddress] * 256) + self.storyData[physAddress]})
+            physAddress = physAddress + 2
+            self.log.Trace("  - operand constant " + operands[-1].c)
+            continue
+        end if
+        if operandTypeCode == 1 then
+            // Small constant; 1 byte operand.
+            operands.push({"t": "c", "c": self.storyData[physAddress]})
+            physAddress = physAddress + 1
+            self.log.Trace("  - operand constant " + operands[-1].c)
+            continue
+        end if
+        if operandTypeCode == 2 then
+            // Variable reference; 1 byte operand.
+            operands.push({"t": "v", "v": self.storyData[physAddress]})
+            physAddress = physAddress + 1
+            self.log.Trace("  - operand variable reference " + operands[-1].v)
+            // continue
+        end if
+        // If 3, then it's from an omitted variable count.
+    end for
+
+    storesVariable = null
+    if opCodeInfo[3] then
+        // Stores a value.  Next byte is the variable reference.
+        storesVariable = self.storyData[physAddress]
+        self.log.Trace("  - stores to variable reference " + storesVariable)
+        physAddress = physAddress + 1
+    end if
+
+    branch = null
+    if opCodeInfo[4] then
+        // Stores a branch location.
+        // Instructions which test a condition are called "branch" instructions.
+        // The branch information is stored in one or two bytes, indicating what to do with the result
+        // of the test.
+        branch = {}
+        val1 = self.storyData[physAddress]
+        physAddress = physAddress + 1
+        
+        if val1 >= 128 then
+            // bit 7 set.  Branch is on true.
+            branch.b = true
+            val1 = val1 % 128  // clear bit 7 for easier testing of bit 6.
+            self.log.Trace("  - branches on true")
+        else
+            // bit 7 not set.  A branch occurs when the condition was false
+            branch.b = false
+            self.log.Trace("  - branches on false")
+        end if
+
+        if val1 >= 64 then
+            // If bit 6 is set, then the branch occupies 1 byte only, and the
+            // "offset" is in the range 0 to 63, given in the bottom 6 bits.
+            offset = val1 % 64  // get bottom 6 bits
+        else
+            // If bit 6 is clear, then the offset is a signed 14-bit number given in bits 0 to 5 of the
+            // first byte followed by all 8 of the second.
+            val2 = self.storyData[physAddress]
+            physAddress = physAddress + 1
+
+            // To get the offset, we'll first compute it as though it's a positive 13-bit
+            // number, then, if negative, handle that.
+            offset = ((val1 % 32) * 256) + val2
+            
+            // bit 6 is clear, so bit 5 is now the sign bit.
+            if val1 >= 32 then
+                // Now make it negative.  This is done with a 2's complement.
+                offset = 8192 - offset
+            end if
+        end if
+
+        // An offset of 0 means "return false from the current routine", and 1 means "return true
+        // from the current routine".
+        if offset == 0 or offset == 1 then
+            // false == 0, true == 1
+            branch.r = offset
+            branch.t = "r"
+            self.log.Trace("  - branch returns " + offset)
+        else
+            // Otherwise, a branch moves execution to the instruction at address
+            // Address after branch data + Offset - 2.
+            branch.a = physAddress + offset - 2
+            branch.t = "a"
+            self.log.Trace("  - branch jumps to " + branch.a)
+        end if
+    end if
+
+    // [opcodeName, operandsList, nextInstructionAddress, storedValue (maybe null), branchValue (maybe null)]
+    return [opcodeMnemonic, operands, physAddress, storesVariable, branch]
 end function

@@ -2,16 +2,8 @@
     {
         "type": "about",
         "description": [
-            "The Z-Machine"
-        ]
-    },
-    {
-        "type": "file",
-        "local": "tests/minizork.z3",
-        "path": "~/games/minizork.z3.a85",
-        "encoding": "ascii85",
-        "$comment": [
-            "Example game to try out."
+            "The Z-Machine Interpreter for Grey Hack",
+            "The Z-Machine is a specification for interpreters to run old Infocom text-adventure style games."
         ]
     },
     {

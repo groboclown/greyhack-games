@@ -75,6 +75,27 @@ Screen.New = function(width, height)
     return ret
 end function
 
+// Reset Set the state back to initial values, as though a game "restart" happened.
+Screen.Reset = function()
+    self.IsInterpreterStatusLine = false
+    self.IsInterpreterScore = false
+    self.IsInterpreter24HourTime = false
+    self.StatusLineObjectName = ""
+    self.StatusLineScore = 0
+    self.StatusLineTurn = 0
+
+    self.StatusBackgroundColor = 4
+    self.StatusForegroundColor = 2
+
+    self.Windows = [
+        ScreenWindow.New(self.Width, 0, 2, 4, self.ColorSpace24, self.ColorSpace15),
+        ScreenWindow.New(self.Width, self.Height, 2, 4, self.ColorSpace24, self.ColorSpace15),
+    ]
+    self.ActiveWindowIndex = 1
+    self.Windows[1].IsBufferingText = true
+    self.Windows[1].CanBufferText = true
+end function
+
 // Render Create the format lines to send to the native draw screen.
 Screen.Render = function()
     lines = []
