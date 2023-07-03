@@ -23,11 +23,12 @@ MachineState = {}
 // String access is a bit of a hybrid, in that
 // it maintains a copy of the decoded string at an address,
 // and decodes directly from memory.
-MachineState.New = function(storyData, screen)
+MachineState.New = function(storyData, native)
     if storyData.len < 64 then exit("data must be at least 64 bytes long")
 
     ret = new MachineState
-    ret.screen = screen
+    ret.screen = Screen.New(native.ScreenWidth, native.ScreenHeight)
+    ret.native = native
     ret.log = Logger.New("mcst")
     ret.log.Debug("Loading " + storyData.len + " byte story.")
 
@@ -78,6 +79,11 @@ MachineState.New = function(storyData, screen)
     version = storyData[0] // 0x00
     if version == 6 then exit("version 6 files not supported")
     ret.FileVersion = version
+
+    ret.WordSize = 2
+    if version >= 8 then
+        ret.WordSize = 4
+    end if
 
     // Story Release Number
     ret.ReleaseNumber = storyData[3]
@@ -259,8 +265,7 @@ MachineState.New = function(storyData, screen)
 
     // positions 32 - 37 reflect the screen size, and 44-45 handle the colors, and extension
     // header word 5 and 6 handle the true colors.
-    ret.UpdateScreen(screen)
-
+    ret.UpdateScreenRef()
 
     // Stream handling.
 
@@ -268,12 +273,7 @@ MachineState.New = function(storyData, screen)
     ret.Stream1Active = true
 
     // Stream 2 == transcript
-    // Because it's designed for a printer, some games can activate it
-    // rapidly.  So the filename should be kept after set the first time.
-    // It should also support buffering text (e.g. word wrapping), but we don't.
     ret.Stream2Active = false
-    ret.Stream2Filename = null
-    ret.Stream2File = null
 
     // Stream 3 == dynamic memory table; when selected, no output is sent to the other two.
     // While stream 3 is selected, the table’s contents are unspecified
@@ -302,6 +302,9 @@ MachineState.New = function(storyData, screen)
     // Initialize the table, based on the current version information.
     ret.log.Debug("Initializing the zscii alphabet table")
     ret.zsciiAlphabetTableInit()
+    native.SetZsciiUnicodeTable(ret.zsciiSpecialUnicode)
+
+    ret.cachedAbbreviations = {}
 
     return ret
 end function
@@ -363,41 +366,57 @@ MachineState.DumpStr = function()
         "Alphabet table address:   " + toHex(self.AlphabetTableAddress),
         "Terminating table address:" + toHex(self.TerminatingCharactersTableAddress),
         "",
-        "    **** Story file default dictionary ****",
+        "    **** Abbreviations ****",
         "",
     ]
+    for index in self.cachedAbbreviations.indexes
+        ret.push("[" + index + "] '" + self.cachedAbbreviations[index] + "'")
+    end for
+
+    ret = ret + ["", "    **** Story file default dictionary ****", ""]
     self.log.Debug("Generating the dictionary at " + toHex(self.DictionaryAddress))
     dict = self.ParseDictionary(self.DictionaryAddress)
     for index in dict.indexes
         item = dict[index]
         ret.push("  " + item[1] + " (" + toHex(item[0]) + ")  '" + index + "'")
     end for
+
+    ret = ret + ["", "    **** Object 2 Information ****", ""]
+    data = self.GetObjectData(2)
+    ret = ret + [
+        "Object Id:    1",
+        "Object Name:  '" + self.GetObjectName(data) + "'",
+        "Parent Id:    " + self.GetObjectParent(data),
+        "Child Id:     " + self.GetObjectChild(data),
+        "Sibling Id:   " + self.GetObjectSibling(data),
+    ]
     return ret
 end function
 
-// UpdateScreen Update the machine state to reflect changes to the output screen.
-MachineState.UpdateScreen = function(screen)
+// UpdateScreenRef Update the machine state to reflect changes to the output screen.
+MachineState.UpdateScreenRef = function()
     self.log.Debug("Updating the header screen values")
 
-    if screen == null then screen = self.screen
-    self.screen = screen
+    // This is using the screen object's width/height, not the native values.
+    // The screen may have its own things between the game's view of the output
+    // and the actual output construction.
 
     // Screen height (lines): 255 means “infinite”
-    self.headerData[32] = screen.Height  // 0x20
+    self.headerData[32] = self.screen.Height  // 0x20
 
     // Screen width (characters)
-    self.headerData[33] = screen.Width // 0x21
+    self.headerData[33] = self.screen.Width // 0x21
 
     // Unit sizes: since we don't use graphics, use unit size of 1 to make it easy on us.
     // And it's completely valid.
 
     // Screen width in units (word)
     self.headerData[34] = 0  // 0x22
-    self.headerData[35] = screen.Width  // 0x23
+    self.headerData[35] = self.screen.Width  // 0x23
 
     // Screen height in units (word)
     self.headerData[36] = 0  // 0x24
-    self.headerData[37] = screen.Height  // 0x25
+    self.headerData[37] = self.screen.Height  // 0x25
 
     // Font width in units (defined as width of a 0)
     //   v6, this is font height in units
@@ -409,19 +428,19 @@ MachineState.UpdateScreen = function(screen)
 
     // Default background colour
     self.DefaultBackgroundColor = 2
-    self.headerData[44] = screen.DefaultBackgroundColor  // 0x2c
+    self.headerData[44] = self.screen.DefaultBackgroundColor  // 0x2c
 
     // Default foreground colour
     self.DefaultForegroundColor = 4
-    self.headerData[45] = screen.DefaultForegroundColor  // 0x2d
+    self.headerData[45] = self.screen.DefaultForegroundColor  // 0x2d
 
     // Extension header word 5: true default foreground color
     // Extension header word 6: true default background color
     if self.ExtensionHeaderAddr != null and self.ExtensionHeaderWordCount >= 6 then
-        self.headerExtensionData[10] = floor(screen.DefaultForegroundColor15 / 256) % 256
-        self.headerExtensionData[11] = screen.DefaultForegroundColor15 % 256
-        self.headerExtensionData[12] = floor(screen.DefaultBackgroundColor15 / 256) % 256
-        self.headerExtensionData[13] = screen.DefaultBackgroundColor15 % 256
+        self.headerExtensionData[10] = floor(self.screen.DefaultForegroundColor15 / 256) % 256
+        self.headerExtensionData[11] = self.screen.DefaultForegroundColor15 % 256
+        self.headerExtensionData[12] = floor(self.screen.DefaultBackgroundColor15 / 256) % 256
+        self.headerExtensionData[13] = self.screen.DefaultBackgroundColor15 % 256
     end if
 end function
 
@@ -530,14 +549,6 @@ MachineState.FromByteAddress = function(address)
     return address
 end function
 
-// FromWordAddress Convert a word address to a physical address.
-MachineState.FromWordAddress = function(address)
-    physAddress = address * 2
-    // Can access up to 128k
-    if physAddress > 131071 or physAddress + 1 >= self.storyData.len then return null
-    return physAddress
-end function
-
 // FromStringPackAddress Convert a string pack address to a physical address.
 MachineState.FromStringPackAddress = function(address)
     return (address * self.packedAddressMult) + self.stringOffset
@@ -586,7 +597,20 @@ MachineState.ReadByte = function(physAddress)
     return self.storyData[physAddress]
 end function
 
-// Set Game accessible memory write
+// SetWord Game accessible memory write
+MachineState.SetWord = function(physAddress, value)
+    // Because of the frequency of this call, it should be optimized.
+    if self.WordSize == 2 then
+        self.SetByte(physAddress, floor(value / 256) % 256)
+        self.SetByte(physAddress + 1, value % 256)
+    end if
+    self.SetByte(physAddress, floor(value / 16777216) % 256)
+    self.SetByte(physAddress + 1, floor(value / 65536) % 256)
+    self.SetByte(physAddress + 2, floor(value / 256) % 256)
+    self.SetByte(physAddress + 3, value % 256)
+end function
+
+// SetByte Game accessible memory write
 MachineState.SetByte = function(physAddress, value)
     // It is illegal for a game to attempt to write to static memory.
     if physAddress < 0 or physAddress >= self.StaticMemoryBaseAddress then exit("Illegal address: " + physAddress)
@@ -598,17 +622,12 @@ MachineState.SetByte = function(physAddress, value)
         //    The game + interpreter can set this whenever.
         if value % 2 == 1 then
             // Turn on file transcript.
-            // Because it's designed for a printer, some games can activate it
-            // rapidly.  So the filename should be kept after set the first time.
-            if self.Stream2Filename == null then
-                print("NOTE: currently, transcript file writing is not implemented")
-                filename = user_input("Transcript file name> ")
+            if self.native.EnableTranscript() then
                 self.Stream2Active = true
-                // ret.Stream2Filename = null
-                // ret.Stream2File = null
             end if
         else
             // Turn off stream 2, but don't change the filename.
+            self.native.DisableTranscript()
             self.Stream2Active = false
         end if
 
@@ -656,6 +675,7 @@ MachineState.SetOutputStreamState = function(streamNumber, tableAddress = null)
         flag2flip = bitAnd(flag2, 254)  // 0xfe, 0b11111110
         if enabled then flag2flip = flag2flip + 1
         if flag2flip != flag2 then
+            // This should trigger the native state change.
             self.SetByte(16, flag2flip)  // 0x10
         end if
     else if streamNumber == 3 then
@@ -673,8 +693,11 @@ MachineState.SetOutputStreamState = function(streamNumber, tableAddress = null)
         end if
     else if streamNumber == 4 then
         // Stream 4 is just user input
-        // Not currently supported.
-        // self.Stream4 = null
+        if enabled then
+            self.native.EnableUserInputCapture()
+        else
+            self.native.DisableUserInputCapture()
+        end if
     else if streamNumber != 0 then
         // enable stream 0 is ignored.
         exit("Invalid stream number " + streamNumber)
@@ -686,6 +709,242 @@ MachineState.Print = function()
     // output streams which are selected. (However, they remain selected.)
     // Writing a newline to stream 3 is turned into ZSCII 13.
 end function
+
+
+// ====================================================================
+
+// GetObjectPropertyDefault Get the default property value
+MachineState.GetObjectPropertyDefault = function(propertyIndex)
+    // 31 values in v3
+    if propertyIndex > 31 and self.FileVersion <= 3 then return null
+    // 63 values in v4+
+    if propertyIndex > 63 or propertyIndex < 0 then return null
+
+    address = self.ObjectTableAddress + (propertyIndex * self.WordSize)
+    return self.ReadWord(address)
+end function
+
+// GetObjectData Get the base object's opague value.
+//
+// The object value should be considered opaque, and the other object calls should be used to query.
+// The returned object is a list of attribute flags array, parent object id, sibling object id,
+// child object id, property pointer, object address, object index.
+MachineState.GetObjectData = function(objectIndex)
+    if objectIndex == null or objectIndex <= 0 then return null  // object 0 is the "no object".  Null.
+    if objectIndex > 255 and self.FileVersion <= 3 then return null
+    if objectIndex > 65535 then return null
+
+    if self.FileVersion <= 3 then
+        // 31 * word size byte header
+        // Each entry is 9 bytes
+        address = self.ObjectTableAddress + (31 * self.WordSize) + ((objectIndex - 1) * 9)
+        // the 32 attribute flags     parent     sibling     child   properties
+        // ---32 bits in 4 bytes---   ---3 bytes------------------  ---2 bytes--
+        return [
+            // flag bytes
+            // Attribute 0 is bit 7 of byte 0.
+            [self.ReadByte(address), self.ReadByte(address + 1), self.ReadByte(address + 2), self.ReadByte(address + 3)],
+            // parent object id
+            self.ReadByte(address + 4),
+            // sibling object id
+            self.ReadByte(address + 5),
+            // child object id
+            self.ReadByte(address + 6),
+            // property pointer
+            (self.ReadByte(address + 7) * 256) + self.ReadByte(address + 8),
+            // object address
+            address,
+            // object index
+            objectIndex,
+        ]
+    end if
+
+    // 63 * word size byte header.
+    // Each entry is 14 bytes.
+    address = self.ObjectTableAddress + (63 * self.WordSize) + ((objectIndex - 1) * 14)
+    // the 48 attribute flags     parent    sibling   child     properties
+    // ---48 bits in 6 bytes---   ---3 words, i.e. 6 bytes----  ---2 bytes--
+    return [
+        // flag bytes
+        // Attribute 0 is bit 7 of byte 0.
+        [
+            self.ReadByte(address), self.ReadByte(address + 1), self.ReadByte(address + 2),
+            self.ReadByte(address + 3), self.ReadByte(address + 4), self.ReadByte(address + 5),
+        ],
+        // parent object id
+        (self.ReadByte(address + 6) * 256) + self.ReadByte(address + 7),
+        // sibling object id
+        (self.ReadByte(address + 8) * 256) + self.ReadByte(address + 9),
+        // child object id
+        (self.ReadByte(address + 10) * 256) + self.ReadByte(address + 11),
+        // property pointer
+        (self.ReadByte(address + 12) * 256) + self.ReadByte(address + 13),
+        // object address
+        address,
+        // object index
+        objectIndex,
+    ]
+end function
+
+// GetObjectParent Get the parent object for the given opaque object, or null if it does not exist.
+MachineState.GetObjectParent = function(objectValues)
+    if objectValues == null then return null
+    return self.GetObjectData(objectValues[1])
+end function
+
+// SetObjectParent Set the parent ID for the given opaque object.
+MachineState.SetObjectParent = function(objectValues, parentIndex)
+    if objectValues == null then return
+    objectValues[1] = parentIndex
+    address = objectValues[5]
+    if self.FileVersion <= 3 then
+        self.SetByte(address + 4, parentIndex)
+    else
+        self.SetWord(address + 6, parentIndex)
+    end if
+end function
+
+// GetObjectSibling Get the sibling object for the given opaque object, or null if it does not exist.
+MachineState.GetObjectSibling = function(objectValues, siblingId)
+    if objectValues == null then return null
+    return self.GetObjectData(objectValues[2])
+end function
+
+// SetObjectSibling Set the sibling ID for the given opaque object.
+MachineState.SetObjectSibling = function(objectValues)
+    if objectValues == null then return
+    objectValues[2] = parentIndex
+    address = objectValues[5]
+    if self.FileVersion <= 3 then
+        self.SetByte(address + 5, parentIndex)
+    else
+        self.SetWord(address + 8, parentIndex)
+    end if
+end function
+
+// GetObjectChild Get the first child object for the given opaque object, or null if it does not exist.
+MachineState.GetObjectChild = function(objectValues)
+    if objectValues == null then return null
+    return self.GetObjectData(objectValues[3])
+end function
+
+// SetObjectChild Set the first child ID for the given opaque object.
+MachineState.SetObjectChild = function(objectValues, childId)
+    if objectValues == null then return null
+    objectValues[3] = parentIndex
+    address = objectValues[5]
+    if self.FileVersion <= 3 then
+        self.SetByte(address + 6, parentIndex)
+    else
+        self.SetWord(address + 10, parentIndex)
+    end if
+end function
+    
+_FLAG_BIT_MASK = [
+    128, // flag 0 == 0x80
+    64,  // flag 1 == 0x40
+    32,  // flag 2 == 0x20
+    16,  // flag 3 == 0x10
+    8,   // flag 4 == 0x08
+    4,   // flag 5 == 0x04
+    2,   // flag 6 == 0x02
+    1,   // flag 7 == 0x01
+]
+
+// IsObjectFlagSet Check if the flag index, from the object values returned by GetObjectData, is set.
+MachineState.IsObjectFlagSet = function(objectValues, flagIndex)
+    byteIndex = floor(flagIndex / 8)
+    bitIndex = flagIndex % 8
+    if byteIndex < 0 or byteIndex >= objectValues[0].len then return false
+    val = bitAnd(objectValues[0][byteIndex], _FLAG_BIT_MASK[bitIndex])
+    return val != 0
+end function
+
+// GetObjectName Get the short name of the object for the given opaque values.
+MachineState.GetObjectName = function(objectValues)
+    // Assume the "text" of the name is just a string, not zscii?
+    if objectValues == null then return null
+    propAddress = objectValues[4]
+    // All versions start the table with the length byte, short name text.
+    textLen = self.ReadByte(propAddress)
+    // return self.ReadString(propAddress + 1, textLen)
+    return self.ReadString(propAddress + 1)
+end function
+
+// Each object has its own property table. Each of these can be anywhere in dynamic memory (indeed, a game can legally change an object’s properties table address in play, provided the new address points to another valid properties table). The header of a property table is as follows:
+
+// ----
+// text-length     text of short name of object
+// -----byte----   --some even number of bytes---
+// ----
+
+
+// In Versions 1 to 3, each property is stored as a block
+
+// ----
+// size byte     the actual property data
+//             ---between 1 and 8 bytes--
+// ----
+
+// where the *size byte* is arranged as 32 times the number of data bytes minus one, plus the property number. A property list is terminated by a size byte of 0. (It is otherwise illegal for a size byte to be a multiple of 32.)
+
+// How to interpret the size byte
+// The “is arranged as” phrasing threw me for longer than I would like to admit. What this really means is that the value “data bytes minus one” has been left-shifted by 5 (i.e. multiplied by 32) and occupies the top three bits in the byte. The lower 5 bits contain the property number. That is:
+    
+// "Size" byte for a property
+// "7" "6" "5" "4" "3" "2" "1" "0"
+// "length - 1" (span 3)
+// "prop num" (span 5)
+//   
+// This also matches the “1–8 byte” range for the data; three bits can represent the values from 0 to 7, which yields 1 to 8 once you “add one” back to the length value.
+    
+// In Versions 4 and later, a property block instead has the form
+
+// ----
+// size and number       the actual property data
+// --1 or 2 bytes---     --between 1 and 64 bytes--
+// ----
+    
+// The property number occupies the bottom 6 bits of the first size byte.
+    
+// If the top bit (bit 7) of the first size byte is set, then there are two size-and-number bytes as follows. In the first byte, bits 0 to 5 contain the property number; bit 6 is undetermined (it is clear in all Infocom or Inform story files); bit 7 is set. In the second byte, bits 0 to 5 contain the property data length, counting in bytes; bit 6 is undetermined (it is set in Infocom story files, but clear in Inform ones); bit 7 is always set.
+    
+// *[1.0]* A value of 0 as property data length (in the second byte) should be interpreted as a length of 64. (Inform can compile such properties.)
+    
+// If the top bit (bit 7) of the first size byte is clear, then there is only one size-and-number byte. Bits 0 to 5 contain the property number; bit 6 is either clear to indicate a property data length of 1, or set to indicate a length of 2; bit 7 is clear.
+    
+// Size byte(s) in versions 4 and later
+// Again, showing the byte/bit variations helps make things more clear.
+    
+// With the high bit clear in the first byte:
+    
+// Single-byte size (high bit clear)
+// "7" "6" "5" "4" "3" "2" "1" "0"
+// "0" (span 1)
+// "length" (span 1)
+// "prop num" (span 6)
+    
+// where the actual data length is _length_+1 (resulting in either 1 or 2).
+ 
+// With the high bit set in the first byte:
+    
+// Two-byte size (high bit set)
+// "7" "6" "5" "4" "3" "2" "1" "0" "7" "6" "5" "4" "3" "2" "1" "0"
+// "first byte"  (span 8)
+// "second byte" (span 8)
+//    
+// "1" (span 1)
+// "?" (span 1)
+// "prop num" (span 6)
+// "1" (span 1)
+// "?" (span 1)
+// "length" (span 6)
+
+// And in this case, rather than adding one to the length value, it is taken as-is _except_ a zero value is treated as 64 as per xref:#12_4_2_1_1[**S**12.4.2.1.1].
+
+
+
+// ====================================================================
 
 // ParseDictionary Parse the dictionary at the given address.
 //
@@ -723,12 +982,13 @@ MachineState.ParseDictionary = function(physAddress)
 
     for i in range(0, entryCount - 1)
         entry = self.ReadString(physAddress, charCount)
-        self.log.Debug("Parsed entry " + i + ": '" + entry + "'")
+        // self.log.Debug("Parsed entry " + i + ": '" + entry + "'")
         dict[entry] = [physAddress, i]
         physAddress = physAddress + entryLength
     end for
 
-    self.cachedDictionaries[dictAddress] = dict
+    // Only cache static dictionaries.
+    if dictAddress >= self.StaticMemoryBaseAddress then self.cachedDictionaries[dictAddress] = dict
     return dict
 end function
 
@@ -737,51 +997,20 @@ end function
 
 // ZsciiSplit Split a high and low byte into the three zscii characters.
 //
-// These are 5 bits each, with the top bit of the hi byte being ignored.
+// These are 5 bits each, with the top bit of the hi byte being ignored;
+// if set, it marks the end of the string.
+//
+// --first byte-------   --second byte---
+//  7   6 5 4 3 2  1 0   7 6 5  4 3 2 1 0
+// bit  --first--  --second---  --third--    
 ZsciiSplit = function(b1, b2)
+    b = (b1 * 256) + b2
     return [
-        floor(b1 / 4) % 32,
-        floor(b2 / 32) % 7 + (b1 % 4),
-        b2 % 32,
+        floor(b / 1024) % 32,
+        floor(b / 32) % 32,
+        b % 32,
     ]
 end function
-
-// Turn the key into a zscii character
-ToZscii = function(key)
-    if ZsciiKeyTranslate.hasIndex(key) then return ZsciiKeyTranslate[key]
-    if key == "" then return 13 // newline
-    if key.len != 1 then return 0 // undefined
-
-    // else assume a unicode -> zscii translation
-    // FIXME this isn't right.  It should use the zsciiSpecialUnicode table.
-    return key.lower().code
-end function
-ZsciiKeyTranslate = {
-    "Delete": 8,
-    "Backspace": 8,
-    "Tab": 9,
-    "Escape": 27,
-    "UpArrow": 129,
-    "DownArrow": 130,
-    "LeftArrow": 131,
-    "RightArrow": 132,
-    "F1": 133,
-    "F2": 134,
-    "F3": 135,
-    "F4": 136,
-    "F5": 137,
-    "F6": 138,
-    "F7": 139,
-    "F8": 140,
-    "F9": 141,
-    "F10": 142,
-    "F11": 143,
-    "F12": 144,
-    // Keypad 0-9 are 145-154, but keypad isn't used in Grey Hack.
-    // Menu click -> 252 (V6)
-    // Double click -> 253 (V6)
-    // Single click -> 254
-}
 
 // Zscii alphabet table
 MachineState.zsciiAlphabetTableInit = function()
@@ -849,79 +1078,170 @@ MachineState.zsciiAlphabetTableInit = function()
 end function
 
 // ReadString Read a physical address, up to the char count, of text.
-MachineState.ReadString = function(physAddress, charCount)
+MachineState.ReadString = function(physAddress, maxLen = null)
     if self.cachedStrings.hasIndex(physAddress) then return self.cachedStrings[physAddress]
     stringAddress = physAddress
 
     // Start by loading the zscii bytes.
+    // End-of-string marker is bit 7 == 1 of the first byte of the last pair.
     buffer = []
-    wordCount = ceil(charCount * 2 / 3)
-    self.log.Debug("Reading " + wordCount + " words for string at " + stringAddress)
-    for idx in range(1, wordCount)
+    // self.log.Debug("Reading @" + stringAddress)
+    while maxLen == null or buffer.len < maxLen
         b1 = self.ReadByte(physAddress)
-        self.log.Trace(" " + b1)
         physAddress = physAddress + 1
         b2 = self.ReadByte(physAddress)
-        self.log.Trace(" " + b2)
         physAddress = physAddress + 1
         buffer = buffer + ZsciiSplit(b1, b2)
-        self.log.Trace(" " + b1 + "/" + b2 + " -> " + buffer[-3] + "/" + buffer[-2] + "/" + buffer[-1])
-    end for
-    buffer = buffer[:charCount]
+        // self.log.Trace(" " + buffer.len + ": " + b1 + "/" + b2 + " -> " + buffer[-3] + "/" + buffer[-2] + "/" + buffer[-1])
+        if b1 > 127 then
+            // top bit is set.
+            break
+        end if
+    end while
+    if maxLen != null then buffer = buffer[:maxLen]
 
     // 3 alphabets.  Treatment of rotating between these is done through
     //   characters in the stream.
     alphabet = 0
     charAlpha = alphabet
     ret = ""
+    escBuff = -1
+    abbrevBuff = 0
 
     for ch in buffer
+        // self.log.Debug("Handling " + ch)
         // loop...
         idx = 0
-        if self.FileVersion <= 2 then
-            if ch == 2 then
-                // change just this one...
+
+        // Abbreviation / Synonym check.
+        if abbrevBuff > 1 then
+            // In the middle of an abbreviation lookup.
+            // If z is the first Z-character (1, 2 or 3) and x the subsequent one, then
+            // the interpreter must look up entry 32(z-1)+x in the abbreviations table
+            // and print the string at that word address.
+            // The abbreviations are cached at start time, so they can be just looked up.
+            self.log.Debug("Looked up abbreviation " + abbrevBuff + " index " + ch)
+            abbrevIdx = ((abbrevBuff - 1) * 32) + ch
+            if not self.cachedAbbreviations.hasIndex(abbrevIdx) then
+                abbrevLookupAddress = self.AbbreviationsTableAddress + (abbrevIdx * 2)
+                // Should this look in dynamic data?
+                wordAddress = self.ReadWord(abbrevLookupAddress)
+                physAddress = wordAddress * self.WordSize
+                self.log.Debug("Loading abbreviation " + abbrevIdx + " @ptr " + abbrevLookupAddress + " -> " + physAddress)
+    
+                self.cachedAbbreviations[abbrevIdx] = self.ReadString(physAddress)
+                self.log.Debug(" -> " + self.cachedAbbreviations[abbrevIdx])
+            end if
+
+            ret = ret + self.cachedAbbreviations[abbrevIdx]
+            abbrevBuff = 0
+            continue
+
+        // ZSCII escape check.
+        //   If the alphabet is A2, and character is 6, then the next 2 characters represent
+        //   a 10-bit ZSCII character code.
+        else if escBuff == -2 then
+            // first character after escape marker is the top 5 bits.
+            escBuff = ch * 32
+            // self.log.Trace("Read zscii escape sequence hi bits")
+            // Don't process this character yet...
+            continue
+        else if escBuff >= 0 then
+            // second character is the bottom 5 bits.
+            idx = escBuff + ch
+            // self.log.Trace("Read zscii escape sequence lo bits")
+            escBuff = -1
+            // process this character by falling through.
+        else if charAlpha == 2 and ch == 6 then
+            // Entering the zscii escape sequence.
+            // self.log.Trace("Turning to zscii escape sequence")
+            escBuff = -2
+            charAlpha = 0
+            // don't process this character
+            continue
+        
+        // normal character processing...
+        else if self.FileVersion <= 2 then
+            if ch == 1 and self.FileVersion == 2 then
+                // version 2 abbreviation.  Next character is the abbreviation lookup.
+                abbrevBuff = 1
+                // and change the alphabet back
+                charAlpha = alphabet
+                // Do not fall through; must immediately handle the next character
+                continue
+
+            else if ch == 2 then
+                // Change for this next one character to another alphabet.
                 charAlpha = (alphabet + 1) % 3
+                // and continue
+                continue
             else if ch == 3 then
+                // Change for this next one character to another alphabet.
                 charAlpha = (alphabet + 2) % 3
+                // and don't fall through
+                continue
             else if ch == 4 then
-                // permanent change
+                // permanent change the alphabet
                 alphabet = (alphabet + 1) % 3
                 charAlpha = alphabet
+                // and don't fall through
+                continue
             else if ch == 5 then
+                // permanent change the alphabet
                 alphabet = (alphabet + 2) % 3
                 charAlpha = alphabet
+                // and don't fall through
+                continue
             else
                 // perform the lookup
                 idx = self.zsciiAlphabetTables[charAlpha][ch]
-                self.log.Debug("Looked up " + ch + "/" + charAlpha + " -> " + idx)
+                // self.log.Debug("Looked up " + ch + "/" + charAlpha + " -> " + idx)
 
-                // and change the alphabet
+                // and change the alphabet back
                 charAlpha = alphabet
             end if
         else
-            if ch == 4 then
+            if ch >= 1 and ch <= 3 then
+                // Abbreviation lookup next character.
+                // self.log.Trace("Turning to abbreviation replacement")
+                abbrevBuff = ch
+                // and change the alphabet back
+                charAlpha = 0
+
+                // Do not fall through; must immediately handle the next character
+                continue
+            else if ch == 4 then
+                // Change for this next one character to A1
+                // self.log.Trace("Turning to A1")
                 charAlpha = 1
+                // and don't fall through
+                continue
             else if ch == 5 then
+                // Change for this next one character to A2
+                // self.log.Trace("Turning to A2")
                 charAlpha = 2
+                // and don't fall through
+                continue
             else
                 // perform the lookup
                 idx = self.zsciiAlphabetTables[charAlpha][ch]
+                // self.log.Trace(" -> " + idx)
 
-                // and change the alphabet
+                // and change the alphabet back
                 charAlpha = 0
             end if
         end if
         if self.zsciiSpecialUnicode.hasIndex(idx) then
-            self.log.Debug("  zscii " + idx + " -> " + self.zsciiSpecialUnicode[idx])
+            // self.log.Debug("  zscii " + idx + " -> " + self.zsciiSpecialUnicode[idx])
             ret = ret + self.zsciiSpecialUnicode[idx]
         else
             // assume 1-to-1 unicode translation.
-            self.log.Debug("  zscii " + idx + " -> " + char(idx))
+            // self.log.Debug("  zscii " + idx + " -> " + char(idx))
             ret = ret + char(idx)
         end if
     end for
-    self.cachedStrings[stringAddress] = ret
+    // Only cache static strings.
+    if stringAddress >= self.StaticMemoryBaseAddress then self.cachedStrings[stringAddress] = ret
     return ret
 end function
 

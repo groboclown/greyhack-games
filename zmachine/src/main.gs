@@ -6,17 +6,39 @@ import_code("opcodes_list.gs")
 import_code("machine.gs")
 import_code("screen.gs")
 import_code("loadstory.gs")
+import_code("native.gs")
 
-// A test for now
-import_code("minizork.gs")
 
 main = function(args)
+    if args.len != 1 then
+        print("Z-Machine interpreter.  For running old Infocom style text adventure games.")
+        print("Usage: zmachine (location of story file)")
+        print("The story file must be an ascii85 encoded version of the original file.")
+        exit
+    end if
+    filename = args[0]
+    storyFile = get_shell.host_computer.File(filename)
+    if storyFile == null then
+        storyFile = get_shell.host_computer.File(home_dir + "/" + filename)
+    end if
+    if storyFile == null then
+        storyFile = get_shell.host_computer.File(current_path + "/" + filename)
+    end if
+    if storyFile == null then
+        exit("Could not find story file " + filename)
+    end if
+
     logger = Logger.New("main")
     logger.Debug("Loading story")
-    story = FileLoader.A85Reader(MINIZORK_GAME)
+    
+    story = FileLoader.A85Reader(storyFile.get_content)
+    if story == null then
+        exit("Failed to decode Ascii85 encoded file " + storyFile.path)
+    end if
+
+    native = Native.New(80, 20)
     logger.Debug("Reading into memory")
-    screen = Screen.New(80, 20)
-    state = MachineState.New(story, screen)
+    state = MachineState.New(story, native)
     logger.Debug("Dumping story")
     for line in state.DumpStr()
         print(line)

@@ -6,6 +6,15 @@
         ]
     },
     {
+        "type": "file",
+        "local": "tests/minizork.z3",
+        "path": "~/games/minizork.z3.a85",
+        "encoding": "ascii85",
+        "$comment": [
+            "Example game to try out."
+        ]
+    },
+    {
         "type": "compile",
         "local": "src/main.gs",
         "target": "~/bin/zmachine"

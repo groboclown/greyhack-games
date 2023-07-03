@@ -28,9 +28,6 @@ Screen = {}
 // Note that the Machine must know this width and height, so changing it
 // requires updating the machine as well.
 Screen.New = function(width, height)
-    if height < 0 or height > 255 then exit("Screen height invalid")
-    if width < 0 or width > 255 then exit("Screen width invalid")
-
     ret = new Screen()
     ret.Width = width
     ret.Height = height
@@ -78,8 +75,8 @@ Screen.New = function(width, height)
     return ret
 end function
 
-// Draw Draw the window to the actual display device.
-Screen.Draw = function()
+// Render Create the format lines to send to the native draw screen.
+Screen.Render = function()
     lines = []
     if self.IsInterpreterStatusLine then
         if self.IsInterpreterScore then
@@ -106,18 +103,20 @@ Screen.Draw = function()
         while split.len < splitLen
             split = split + " "
         end while
-        lines.push("<mark=" + self.ColorSpace24[self.StatusBackgroundColor] + "><color=" + self.ColorSpace24[self.StatusForegroundColor] + ">" + title + split + score)
+        lines.push({
+            "t": title + split + score,
+            "fg": self.ColorSpace24[self.StatusForegroundColor],
+            "bg": self.ColorSpace24[self.StatusBackgroundColor],
+            "b": false,
+            "i": false,
+        })
     end if
     for window in self.Windows
         for y in range(0, window.StoredLines - window.Height + 1)
             lines.push(window.FormattedLines)
         end for
     end for
-
-    clear_screen
-    for line in lines
-        print(line)
-    end for
+    return lines
 end function
 
 // SetStatusLine Sets the status line information.
