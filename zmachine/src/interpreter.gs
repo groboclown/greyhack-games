@@ -23,6 +23,10 @@ Interpreter.Run = function()
         self.log.Debug("null instruction fetched")
         return true
     end if
+    // Set the PC for this frame.  In most cases, that's the
+    // right behavior.  Calls will return to the instruction *after* this one.
+    // On return and jump opcodes, the opcode will explicitly change the PC.
+    self.machine.JumpToAddress(instruction[2])
     return not self.HandleInstruction(instruction)
 end function
 
@@ -48,7 +52,7 @@ Interpreter.HandleInstruction = function(instruction)
     //
     // Operand list is a list of maps:
     //     "t": indicating the type of value (c == const, v == variable reference)
-    //     "c": constant integer (always positive; opcode may need to make it negative)
+    //     "c": call value (always positive; opcode may need to make it negative)
     //     "v": variable reference
     // branch operation is a map containing:
     //     "t": the type of branch operation (r == return a value, a == jump to address)
@@ -57,11 +61,7 @@ Interpreter.HandleInstruction = function(instruction)
     runner = @Opcodes[mnemonic]
     self.log.Trace("Running mnemonic " + mnemonic)
     res = runner(self.machine, instruction[1], instruction[3], instruction[4])
-    if res == null then
-        self.log.Trace("  Advancing to next instruction at " + instruction[2])
-        self.machine.JumpToAddress(instruction[2])
-        res = true
-    end if
+    if res == null then return true
     return res
 end function
 

@@ -48,6 +48,7 @@ Native.New = function(width, height)
 
     // Character translation table to zscii
     ret.zsciiSpecialUnicode = {}
+    ret.unicodeFromZscii = {}
 
     return ret
 end function
@@ -64,6 +65,7 @@ end function
 
 // SetZsciiUnicodeTable Set the zscii code -> unicode table
 Native.SetZsciiUnicodeTable = function(table)
+    self.unicodeFromZscii = table
     self.zsciiSpecialUnicode = {}
     for code in table.indexes
         key = table[code]
@@ -107,6 +109,11 @@ Native.DisableTranscript = function()
     self.Stream2File = null
 end function
 
+// PrintTranscript Send text to the transcript
+Native.PrintTranscript = function(text)
+    // Currently ignored
+end function
+
 // EnableUserInputCapture Turn on stream 4 capturing, which is for user input.
 Native.EnableUserInputCapture = function()
     // Currently ignored
@@ -137,6 +144,7 @@ end function
 //
 // A format description is a map that contains all the keys:
 //   * 't' - the text to display.  The length sum of all these on a line should equal the screen width.
+//           this contains the text as a string, but with zscii character codes, not unicode.
 //   * 'fg' - the foreground color, in 24-bit rgb color space ('#rrggbb').
 //   * 'bg' - the background color, in 24-bit rgb color space ('#rrggbb').
 //   * 'b' - bold face; if not included, defaults to false.  Must be either false or true.
@@ -145,49 +153,65 @@ end function
 // Inverse color is implicit by swapping bg/fg.
 Native.DrawScreen = function(formatLines, drawLastLine)
     self.screenContents = []
+
     for fmtParts in formatLines
         // The values are reset on each new line.
         line = ""
-        fg = ""
-        fgEnd = ""
-        bg = ""
-        bgEnd = ""
-        b = false
-        i = false
-        // ft = 1
+        lineCols = 0
+        last = {"t": "", "fg": "", "bg": "", "b": false, "i": false, "ft": 1}
         for fmt in fmtParts
-            if fmt.bg != bg then
-                line = line + bgEnd + "<mark=" + bg + ">"
-                bgEnd = "</mark>"
+            // Don't add formatting if there's no text.
+            if fmt.t.len <= 0 then continue
+            // ignore font for now.
+            if fmt.bg != last.bg or fmt.fg != last.fg or fmt.b != last.b or fmt.i != last.i then
+                line = line + self.renderFmt(last, lineCols)
+                lineCols = lineCols + last.t.len
+                last.t = ""
+                last.fg = fmt.fg
+                last.bg = fmt.bg
+                last.b = fmt.b
+                last.i = fmt.i
             end if
-            if fmt.fg != fg then
-                line = line + fgEnd + "<color=" + fg + ">"
-                fgEnd = "</color>"
-            end if
-            if fmt.b != b then
-                if b then
-                    line = line + "</b>"
-                    b = false
+            // Need to convert the text to unicode from zscii.
+            for ch in fmt.t.values()
+                idx = ch.code
+                if self.unicodeFromZscii.hasIndex(idx) then
+                    // self.log.Debug("  zscii " + idx + " -> " + self.zsciiSpecialUnicode[idx])
+                    last.t = last.t + self.unicodeFromZscii[idx]
                 else
-                    line = line + "<b>"
-                    b = true
+                    // assume 1-to-1 unicode translation.
+                    // self.log.Debug("  zscii " + idx + " -> " + char(idx))
+                    last.t = last.t + ch
                 end if
-            end if
-            if fmt.i != i then
-                if i then
-                    line = line + "</i>"
-                    i = false
-                else
-                    line = line + "<i>"
-                    i = true
-                end if
-            end if
-            line = line + "<noparse>" + fmt.t + "</noparse>"
+            end for
         end for
+        line = line + self.renderFmt(last, lineCols)
         self.screenContents.push(line)
     end for
 
-    self.drawCurrentScreen(drawLastLine)
+    // self.drawCurrentScreen(drawLastLine)
+end function
+
+Native.renderFmt = function(fmt, startPos)
+    if fmt.t.len <= 0 then return ""
+    // Using "mark" will incorrectly put a rectangle bar on top of the
+    // text, which isn't what we want.  However, attempts at drawing
+    // the inverse color underneath with a character then using <pos>
+    // to go back over it doesn't really work either.  I mean, it
+    // works, but there isn't a character that will fill in the block.
+    ret = "<mark=" + fmt.bg + "30>"
+    ret = ret + "<color=" + fmt.fg + ">"
+    tail = "</color></mark>"
+    if fmt.b then
+        ret = ret + "<b>"
+        tail = "</b>" + tail
+    end if
+    if fmt.i then
+        ret = ret + "<i>"
+        tail = "</i>" + tail
+    end if
+    // fmt.fnt
+    return ret + "<noparse>" + fmt.t + "</noparse>" + tail
 end function
 
 Native.drawCurrentScreen = function(includeLastLine)

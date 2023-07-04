@@ -127,6 +127,7 @@ class LookupRow:
 
         cols = row.split("|")
         col_form = len(cols)
+        inherit_bools = False
         if col_form == 6:
             # "                     >|144    <|`90`    |`10010000`    |S     |S"
             cols = [
@@ -143,6 +144,7 @@ class LookupRow:
                 "",
                 "",
             ]
+            inherit_bools = True
         elif col_form == 5:
             # "                                                                      ^| 4 |   |   | xref:15-opcodes.adoc#save[`*save*`] -> (result)"
             cols = ["", "", "", "", "", "", "", "", cols[1], cols[2], cols[3], cols[4]]
@@ -276,8 +278,14 @@ class LookupRow:
                     f"Invalid row {line} has unexpected version '{version_parts}'"
                 )
 
-        is_store = "*" in strip_formatting(cols[9])
-        is_branch = "*" in strip_formatting(cols[10])
+        if inherit_bools:
+            if prev is None:
+                raise ValueError(f"Invalid row {line} + previous row")
+            is_store = prev.stores
+            is_branch = prev.branches
+        else:
+            is_store = "*" in strip_formatting(cols[9])
+            is_branch = "*" in strip_formatting(cols[10])
 
         usage_str = cols[11].strip()
         if usage_str in ("_illegal_", "-", "―"):

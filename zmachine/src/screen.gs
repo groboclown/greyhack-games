@@ -71,6 +71,8 @@ Screen.New = function(width, height)
     // In all versions, the lower window always buffers text by default.
     ret.Windows[1].IsBufferingText = true
     ret.Windows[1].CanBufferText = true
+    ret.Windows[1].ScrollsUp = true
+    ret.Windows[1].CursorY = height - 1
 
     return ret
 end function
@@ -94,6 +96,8 @@ Screen.Reset = function()
     self.ActiveWindowIndex = 1
     self.Windows[1].IsBufferingText = true
     self.Windows[1].CanBufferText = true
+    self.Windows[1].ScrollsUp = true
+    self.Windows[1].CursorY = self.Height - 1
 end function
 
 // Render Create the format lines to send to the native draw screen.
@@ -124,18 +128,28 @@ Screen.Render = function()
         while split.len < splitLen
             split = split + " "
         end while
-        lines.push({
+        // Status line is a single formatted block.
+        lines.push([{
             "t": title + split + score,
             "fg": self.ColorSpace24[self.StatusForegroundColor],
             "bg": self.ColorSpace24[self.StatusBackgroundColor],
             "b": false,
             "i": false,
-        })
+        }])
     end if
     for window in self.Windows
-        for y in range(0, window.StoredLines - window.Height + 1)
-            lines.push(window.FormattedLines)
-        end for
+        startY = 0
+        endY = window.StoredLines - window.Height - 1
+        if window.ScrollsUp then
+            endY = window.Height - 1
+            startY = endY - window.StoredLines + 1
+        end if
+        if endY > startY then
+            for y in range(startY, endY)
+                // Need to fill in the line.
+                lines.push(window.FormattedLines[y])
+            end for
+        end if
     end for
     return lines
 end function
@@ -151,6 +165,11 @@ Screen.SetStatusLine = function(objectName, scoreHour, turnMinute)
         self.Windows[1].SetHeight(self.Windows[1] - 1)
     end if
     StatusLineObjectName
+end function
+
+// PrintZscii Send text to the active window.
+Screen.PrintZscii = function(text)
+    self.Windows[self.ActiveWindowIndex].PrintZscii(text)
 end function
 
 // SetColorspace24 Set the colorspace index.
@@ -191,16 +210,10 @@ ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, col
     ret.colorSpace24 = colorSpace24
     ret.colorSpace15 = colorSpace15
 
-    // Lines The currently shown, raw text within this window.
-    ret.Lines = []
-    // FormattedLines The lines with formatting.  Always filled.
+    // FormattedLines The lines with formatting.  Always filled with empty lines.
     ret.FormattedLines = []
-    fln = "<mark=#" + ret.BackgroundColor24 + ">"
-    for x in range(1, width)
-        x = x + " "
-    end for
     for y in range(1, height)
-        ret.FormattedLines.push(fln)
+        ret.FormattedLines.push([])
     end for
 
     // StoredLines, unlike the actual height, is the number of lines
@@ -239,6 +252,72 @@ ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, col
     return ret
 end function
 
+// PrintZscii Print the zscii string to the window.
+ScreenWindow.PrintZscii = function(text)
+    // Append to the current line.  Optionally word wrap (if buffer mode is on).
+    // FIXME needs proper, nice word-wrap.
+
+    // Early check to prevent more complex behavior.
+    if self.Height <= 0 then return
+    if self.checkY() then return  // out of bounds before we start.
+
+    fg = self.ForegroundColor24
+    bg = self.BackgroundColor24
+    if self.ReverseColor then
+        fg = bg
+        bg = self.ForegroundColor24
+    end if
+    buff = ""
+    nextX = self.CursorX
+    for ch in text.values()
+        if nextX >= self.Width or ch == char(13) then
+            if buff.len > 0 then
+                // There has already been stuff put into the buffer, and the cursor was fine then.
+                // So we can draw it on the current line.
+                self.FormattedLines[self.CursorY].push({
+                    "t": buff,
+                    "fg": fg,
+                    "bg": bg,
+                    "b": self.Bold,
+                    "i": self.Italic,
+                })
+                buff = ""
+            end if
+            if not self.CanBufferText then return  // can't word-wrap, so exit immediately.
+            nextX = 0
+            self.CursorX = 0
+            self.CursorY = self.CursorY + 1
+            if self.checkY() then return  // can't draw anything else
+        end if
+        buff = buff + ch
+        nextX = nextX + 1
+    end for
+    if buff.len > 0 then
+        // There has already been stuff put into the buffer, and the cursor was fine then.
+        // So we can draw it on the current line.
+        self.FormattedLines[self.CursorY].push({
+            "t": buff,
+            "fg": fg,
+            "bg": bg,
+            "b": self.Bold,
+            "i": self.Italic,
+        })
+    end if
+    self.CursorX = nextX
+end function
+
+// Called on moving down a Y.
+ScreenWindow.checkY = function()
+    if self.CursorY >= self.Height then
+        if not self.ScrollsUp then return true  // can't scroll text up, so exit immediately.
+        self.FormattedLines.pull()  // remove the top line
+        self.FormattedLines.push([])
+        self.CursorY = self.Height - 1  // keep it on the last line.
+        self.CursorX = 0  // move the x cursor to the start of the line.
+    end if
+    return false
+end function
+
 // SetColorspace Change the indexed colorspace.
 ScreenWindow.SetColorspace = function(colorSpace15, colorSpace24)
     self.colorSpace24 = colorSpace24
@@ -259,16 +338,12 @@ end function
 ScreenWindow.SetHeight = function(lineCount)
     if lineCount > self.StoredLines then
         // Insert lines into the formatted lines, either at the top or bottom.
-        fln = "<mark=#" + ret.BackgroundColor24 + ">"
-        for x in range(1, self.Width)
-            x = x + " "
-        end for
         while self.StoredLines.len < lineCount
             if self.ScrollsUp then
                 // Add to the top.
-                self.FormattedLines.insert(0, fln)
+                self.FormattedLines.insert(0, [])
             else
-                self.FormattedLines.push(fln)
+                self.FormattedLines.push([])
             end if
         end while
         self.StoredLines = lineCount

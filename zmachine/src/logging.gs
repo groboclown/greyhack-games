@@ -50,3 +50,5 @@ end function
 Logger.Error = function(msg)
     self.Log(Logger.ERROR, msg)
 end function
+
+OpCodeLogger = Logger.New("opcodes")

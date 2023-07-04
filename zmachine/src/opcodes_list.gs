@@ -90,34 +90,34 @@ STD_OPCODE_TABLE = [
   [], // 31
   [], // 32
   [ // 33
-    [1, "je_v1", [1, 2], false, false],
+    [1, "je_v1", [1, 2], false, true],
   ],
   [ // 34
-    [1, "jl_v1", [1, 2], false, false],
+    [1, "jl_v1", [1, 2], false, true],
   ],
   [ // 35
-    [1, "jg_v1", [1, 2], false, false],
+    [1, "jg_v1", [1, 2], false, true],
   ],
   [ // 36
-    [1, "dec_chk_v1", [1, 2], false, false],
+    [1, "dec_chk_v1", [1, 2], false, true],
   ],
   [ // 37
-    [1, "inc_chk_v1", [1, 2], false, false],
+    [1, "inc_chk_v1", [1, 2], false, true],
   ],
   [ // 38
-    [1, "jin_v1", [1, 2], false, false],
+    [1, "jin_v1", [1, 2], false, true],
   ],
   [ // 39
-    [1, "test_v1", [1, 2], false, false],
+    [1, "test_v1", [1, 2], false, true],
   ],
   [ // 40
-    [1, "or_v1", [1, 2], false, false],
+    [1, "or_v1", [1, 2], true, false],
   ],
   [ // 41
-    [1, "and_v1", [1, 2], false, false],
+    [1, "and_v1", [1, 2], true, false],
   ],
   [ // 42
-    [1, "test_attr_v1", [1, 2], false, false],
+    [1, "test_attr_v1", [1, 2], false, true],
   ],
   [ // 43
     [1, "set_attr_v1", [1, 2], false, false],
@@ -132,37 +132,37 @@ STD_OPCODE_TABLE = [
     [1, "insert_obj_v1", [1, 2], false, false],
   ],
   [ // 47
-    [1, "loadw_v1", [1, 2], false, false],
+    [1, "loadw_v1", [1, 2], true, false],
   ],
   [ // 48
-    [1, "loadb_v1", [1, 2], false, false],
+    [1, "loadb_v1", [1, 2], true, false],
   ],
   [ // 49
-    [1, "get_prop_v1", [1, 2], false, false],
+    [1, "get_prop_v1", [1, 2], true, false],
   ],
   [ // 50
-    [1, "get_prop_addr_v1", [1, 2], false, false],
+    [1, "get_prop_addr_v1", [1, 2], true, false],
   ],
   [ // 51
-    [1, "get_next_prop_v1", [1, 2], false, false],
+    [1, "get_next_prop_v1", [1, 2], true, false],
   ],
   [ // 52
-    [1, "add_v1", [1, 2], false, false],
+    [1, "add_v1", [1, 2], true, false],
   ],
   [ // 53
-    [1, "sub_v1", [1, 2], false, false],
+    [1, "sub_v1", [1, 2], true, false],
   ],
   [ // 54
-    [1, "mul_v1", [1, 2], false, false],
+    [1, "mul_v1", [1, 2], true, false],
   ],
   [ // 55
-    [1, "div_v1", [1, 2], false, false],
+    [1, "div_v1", [1, 2], true, false],
   ],
   [ // 56
-    [1, "mod_v1", [1, 2], false, false],
+    [1, "mod_v1", [1, 2], true, false],
   ],
   [ // 57
-    [4, "call_2s_v4", [1, 2], false, false],
+    [4, "call_2s_v4", [1, 2], true, false],
   ],
   [ // 58
     [5, "call_2n_v5", [1, 2], false, false],
@@ -179,34 +179,34 @@ STD_OPCODE_TABLE = [
   [], // 63
   [], // 64
   [ // 65
-    [1, "je_v1", [2, 1], false, false],
+    [1, "je_v1", [2, 1], false, true],
   ],
   [ // 66
-    [1, "jl_v1", [2, 1], false, false],
+    [1, "jl_v1", [2, 1], false, true],
   ],
   [ // 67
-    [1, "jg_v1", [2, 1], false, false],
+    [1, "jg_v1", [2, 1], false, true],
   ],
   [ // 68
-    [1, "dec_chk_v1", [2, 1], false, false],
+    [1, "dec_chk_v1", [2, 1], false, true],
   ],
   [ // 69
-    [1, "inc_chk_v1", [2, 1], false, false],
+    [1, "inc_chk_v1", [2, 1], false, true],
   ],
   [ // 70
-    [1, "jin_v1", [2, 1], false, false],
+    [1, "jin_v1", [2, 1], false, true],
   ],
   [ // 71
-    [1, "test_v1", [2, 1], false, false],
+    [1, "test_v1", [2, 1], false, true],
   ],
   [ // 72
-    [1, "or_v1", [2, 1], false, false],
+    [1, "or_v1", [2, 1], true, false],
   ],
   [ // 73
-    [1, "and_v1", [2, 1], false, false],
+    [1, "and_v1", [2, 1], true, false],
   ],
   [ // 74
-    [1, "test_attr_v1", [2, 1], false, false],
+    [1, "test_attr_v1", [2, 1], false, true],
   ],
   [ // 75
     [1, "set_attr_v1", [2, 1], false, false],
@@ -221,37 +221,37 @@ STD_OPCODE_TABLE = [
     [1, "insert_obj_v1", [2, 1], false, false],
   ],
   [ // 79
-    [1, "loadw_v1", [2, 1], false, false],
+    [1, "loadw_v1", [2, 1], true, false],
   ],
   [ // 80
-    [1, "loadb_v1", [2, 1], false, false],
+    [1, "loadb_v1", [2, 1], true, false],
   ],
   [ // 81
-    [1, "get_prop_v1", [2, 1], false, false],
+    [1, "get_prop_v1", [2, 1], true, false],
   ],
   [ // 82
-    [1, "get_prop_addr_v1", [2, 1], false, false],
+    [1, "get_prop_addr_v1", [2, 1], true, false],
   ],
   [ // 83
-    [1, "get_next_prop_v1", [2, 1], false, false],
+    [1, "get_next_prop_v1", [2, 1], true, false],
   ],
   [ // 84
-    [1, "add_v1", [2, 1], false, false],
+    [1, "add_v1", [2, 1], true, false],
   ],
   [ // 85
-    [1, "sub_v1", [2, 1], false, false],
+    [1, "sub_v1", [2, 1], true, false],
   ],
   [ // 86
-    [1, "mul_v1", [2, 1], false, false],
+    [1, "mul_v1", [2, 1], true, false],
   ],
   [ // 87
-    [1, "div_v1", [2, 1], false, false],
+    [1, "div_v1", [2, 1], true, false],
   ],
   [ // 88
-    [1, "mod_v1", [2, 1], false, false],
+    [1, "mod_v1", [2, 1], true, false],
   ],
   [ // 89
-    [4, "call_2s_v4", [2, 1], false, false],
+    [4, "call_2s_v4", [2, 1], true, false],
   ],
   [ // 90
     [5, "call_2n_v5", [2, 1], false, false],
@@ -268,34 +268,34 @@ STD_OPCODE_TABLE = [
   [], // 95
   [], // 96
   [ // 97
-    [1, "je_v1", [2, 2], false, false],
+    [1, "je_v1", [2, 2], false, true],
   ],
   [ // 98
-    [1, "jl_v1", [2, 2], false, false],
+    [1, "jl_v1", [2, 2], false, true],
   ],
   [ // 99
-    [1, "jg_v1", [2, 2], false, false],
+    [1, "jg_v1", [2, 2], false, true],
   ],
   [ // 100
-    [1, "dec_chk_v1", [2, 2], false, false],
+    [1, "dec_chk_v1", [2, 2], false, true],
   ],
   [ // 101
-    [1, "inc_chk_v1", [2, 2], false, false],
+    [1, "inc_chk_v1", [2, 2], false, true],
   ],
   [ // 102
-    [1, "jin_v1", [2, 2], false, false],
+    [1, "jin_v1", [2, 2], false, true],
   ],
   [ // 103
-    [1, "test_v1", [2, 2], false, false],
+    [1, "test_v1", [2, 2], false, true],
   ],
   [ // 104
-    [1, "or_v1", [2, 2], false, false],
+    [1, "or_v1", [2, 2], true, false],
   ],
   [ // 105
-    [1, "and_v1", [2, 2], false, false],
+    [1, "and_v1", [2, 2], true, false],
   ],
   [ // 106
-    [1, "test_attr_v1", [2, 2], false, false],
+    [1, "test_attr_v1", [2, 2], false, true],
   ],
   [ // 107
     [1, "set_attr_v1", [2, 2], false, false],
@@ -310,37 +310,37 @@ STD_OPCODE_TABLE = [
     [1, "insert_obj_v1", [2, 2], false, false],
   ],
   [ // 111
-    [1, "loadw_v1", [2, 2], false, false],
+    [1, "loadw_v1", [2, 2], true, false],
   ],
   [ // 112
-    [1, "loadb_v1", [2, 2], false, false],
+    [1, "loadb_v1", [2, 2], true, false],
   ],
   [ // 113
-    [1, "get_prop_v1", [2, 2], false, false],
+    [1, "get_prop_v1", [2, 2], true, false],
   ],
   [ // 114
-    [1, "get_prop_addr_v1", [2, 2], false, false],
+    [1, "get_prop_addr_v1", [2, 2], true, false],
   ],
   [ // 115
-    [1, "get_next_prop_v1", [2, 2], false, false],
+    [1, "get_next_prop_v1", [2, 2], true, false],
   ],
   [ // 116
-    [1, "add_v1", [2, 2], false, false],
+    [1, "add_v1", [2, 2], true, false],
   ],
   [ // 117
-    [1, "sub_v1", [2, 2], false, false],
+    [1, "sub_v1", [2, 2], true, false],
   ],
   [ // 118
-    [1, "mul_v1", [2, 2], false, false],
+    [1, "mul_v1", [2, 2], true, false],
   ],
   [ // 119
-    [1, "div_v1", [2, 2], false, false],
+    [1, "div_v1", [2, 2], true, false],
   ],
   [ // 120
-    [1, "mod_v1", [2, 2], false, false],
+    [1, "mod_v1", [2, 2], true, false],
   ],
   [ // 121
-    [4, "call_2s_v4", [2, 2], false, false],
+    [4, "call_2s_v4", [2, 2], true, false],
   ],
   [ // 122
     [5, "call_2n_v5", [2, 2], false, false],
@@ -405,19 +405,19 @@ STD_OPCODE_TABLE = [
     [1, "not_v1", [0], true, false],
   ],
   [ // 144
-    [1, "jz_v1", [1], false, false],
+    [1, "jz_v1", [1], false, true],
   ],
   [ // 145
-    [1, "get_sibling_v1", [1], false, false],
+    [1, "get_sibling_v1", [1], true, true],
   ],
   [ // 146
-    [1, "get_child_v1", [1], false, false],
+    [1, "get_child_v1", [1], true, true],
   ],
   [ // 147
-    [1, "get_parent_v1", [1], false, false],
+    [1, "get_parent_v1", [1], true, false],
   ],
   [ // 148
-    [1, "get_prop_len_v1", [1], false, false],
+    [1, "get_prop_len_v1", [1], true, false],
   ],
   [ // 149
     [1, "inc_v1", [1], false, false],
@@ -429,7 +429,7 @@ STD_OPCODE_TABLE = [
     [1, "print_addr_v1", [1], false, false],
   ],
   [ // 152
-    [4, "call_1s_v4", [1], false, false],
+    [4, "call_1s_v4", [1], true, false],
   ],
   [ // 153
     [1, "remove_obj_v1", [1], false, false],
@@ -447,25 +447,25 @@ STD_OPCODE_TABLE = [
     [1, "print_paddr_v1", [1], false, false],
   ],
   [ // 158
-    [1, "load_v1", [1], false, false],
+    [1, "load_v1", [1], true, false],
   ],
   [ // 159
     [5, "call_1n_v5", [1], false, false],
   ],
   [ // 160
-    [1, "jz_v1", [2], false, false],
+    [1, "jz_v1", [2], false, true],
   ],
   [ // 161
-    [1, "get_sibling_v1", [2], false, false],
+    [1, "get_sibling_v1", [2], true, true],
   ],
   [ // 162
-    [1, "get_child_v1", [2], false, false],
+    [1, "get_child_v1", [2], true, true],
   ],
   [ // 163
-    [1, "get_parent_v1", [2], false, false],
+    [1, "get_parent_v1", [2], true, false],
   ],
   [ // 164
-    [1, "get_prop_len_v1", [2], false, false],
+    [1, "get_prop_len_v1", [2], true, false],
   ],
   [ // 165
     [1, "inc_v1", [2], false, false],
@@ -477,7 +477,7 @@ STD_OPCODE_TABLE = [
     [1, "print_addr_v1", [2], false, false],
   ],
   [ // 168
-    [4, "call_1s_v4", [2], false, false],
+    [4, "call_1s_v4", [2], true, false],
   ],
   [ // 169
     [1, "remove_obj_v1", [2], false, false],
@@ -495,7 +495,7 @@ STD_OPCODE_TABLE = [
     [1, "print_paddr_v1", [2], false, false],
   ],
   [ // 174
-    [1, "load_v1", [2], false, false],
+    [1, "load_v1", [2], true, false],
   ],
   [ // 175
     [5, "call_1n_v5", [2], false, false],
@@ -557,34 +557,34 @@ STD_OPCODE_TABLE = [
   ],
   [], // 192
   [ // 193
-    [1, "je_v1", [3], false, false],
+    [1, "je_v1", [3], false, true],
   ],
   [ // 194
-    [1, "jl_v1", [3], false, false],
+    [1, "jl_v1", [3], false, true],
   ],
   [ // 195
-    [1, "jg_v1", [3], false, false],
+    [1, "jg_v1", [3], false, true],
   ],
   [ // 196
-    [1, "dec_chk_v1", [3], false, false],
+    [1, "dec_chk_v1", [3], false, true],
   ],
   [ // 197
-    [1, "inc_chk_v1", [3], false, false],
+    [1, "inc_chk_v1", [3], false, true],
   ],
   [ // 198
-    [1, "jin_v1", [3], false, false],
+    [1, "jin_v1", [3], false, true],
   ],
   [ // 199
-    [1, "test_v1", [3], false, false],
+    [1, "test_v1", [3], false, true],
   ],
   [ // 200
-    [1, "or_v1", [3], false, false],
+    [1, "or_v1", [3], true, false],
   ],
   [ // 201
-    [1, "and_v1", [3], false, false],
+    [1, "and_v1", [3], true, false],
   ],
   [ // 202
-    [1, "test_attr_v1", [3], false, false],
+    [1, "test_attr_v1", [3], false, true],
   ],
   [ // 203
     [1, "set_attr_v1", [3], false, false],
@@ -599,37 +599,37 @@ STD_OPCODE_TABLE = [
     [1, "insert_obj_v1", [3], false, false],
   ],
   [ // 207
-    [1, "loadw_v1", [3], false, false],
+    [1, "loadw_v1", [3], true, false],
   ],
   [ // 208
-    [1, "loadb_v1", [3], false, false],
+    [1, "loadb_v1", [3], true, false],
   ],
   [ // 209
-    [1, "get_prop_v1", [3], false, false],
+    [1, "get_prop_v1", [3], true, false],
   ],
   [ // 210
-    [1, "get_prop_addr_v1", [3], false, false],
+    [1, "get_prop_addr_v1", [3], true, false],
   ],
   [ // 211
-    [1, "get_next_prop_v1", [3], false, false],
+    [1, "get_next_prop_v1", [3], true, false],
   ],
   [ // 212
-    [1, "add_v1", [3], false, false],
+    [1, "add_v1", [3], true, false],
   ],
   [ // 213
-    [1, "sub_v1", [3], false, false],
+    [1, "sub_v1", [3], true, false],
   ],
   [ // 214
-    [1, "mul_v1", [3], false, false],
+    [1, "mul_v1", [3], true, false],
   ],
   [ // 215
-    [1, "div_v1", [3], false, false],
+    [1, "div_v1", [3], true, false],
   ],
   [ // 216
-    [1, "mod_v1", [3], false, false],
+    [1, "mod_v1", [3], true, false],
   ],
   [ // 217
-    [4, "call_2s_v4", [3], false, false],
+    [4, "call_2s_v4", [3], true, false],
   ],
   [ // 218
     [5, "call_2n_v5", [3], false, false],

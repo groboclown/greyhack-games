@@ -366,11 +366,54 @@ MachineState.UpdateScreenRef = function()
     end if
 end function
 
-// GetGlobalVariable Get the global variable as the opcode references it (number between 0x10 and 0xff)
-MachineState.GetGlobalVariable = function(variable)
+// GetVariableRef Get the variable reference value, or null if invalid.
+MachineState.GetVariableRef = function(variableRef)
+    self.log.Trace("Getting variable reference " + variableRef)
+    if variableRef >= 16 then return self.getGlobalVariable(variableRef)
+    if variableRef == 0 then
+        // get from the stack
+        stack = self.callStack[-1].stack
+        if stack.len > 0 then
+            self.log.Trace(" - Getting top of stack == " + stack[-1])
+            return stack[-1]
+        end if
+        self.log.Trace(" - Getting from empty stack")
+        return 0
+    end if
+    callLocals = self.callStack[-1].locals
+    // variableRef will reference index - 1
+    self.log.Trace(" - Getting from local variables " + callLocals)
+    if callLocals.len < variableRef then return 0
+    return callLocals[variableRef - 1]
+end function
+
+// SetVariableRef Set the variable reference value.
+MachineState.SetVariableRef = function(variableRef, value)
+    if variableRef >= 16 then return self.setGlobalVariable(variableRef, value)
+    // should this check that the value is in range?
+    if variableRef == 0 then
+        // push onto the stack
+        self.log.Trace(" - pushing value " + value + " to stack")
+        self.callStack[-1].stack.push(value)
+        return
+    end if
+    callLocals = self.callStack[-1].locals
+    // variableRef will reference index - 1
+    // Really, the variable size is set in the routine header, so this
+    // should cause a failure if the variable ref > size.
+    while callLocals.len < variableRef
+        callLocals.push(0)
+    end while
+    self.log.Trace(" - Setting local variable " + variableRef - 1 + " to " + value)
+    callLocals[variableRef-1] = value
+end function
+
+// getGlobalVariable Get the global variable as the opcode references it (number between 0x10 and 0xff)
+MachineState.getGlobalVariable = function(variable)
     if variable < 16 or variable > 255 then exit("Invalid variable reference " + variable)
 
-    address = self.GlobalVariablesTableAddress + (variable * 2)
+    address = self.GlobalVariablesTableAddress + ((variable - 16) * 2)  // 0x10
+    self.log.Trace("Getting global variable " + variable + " @" + address)
     hi = self.storyData[address]
     if self.dynamicMemory.hasIndex(address) then
         hi = self.dynamicMemory[address]
@@ -380,17 +423,21 @@ MachineState.GetGlobalVariable = function(variable)
     if self.dynamicMemory.hasIndex(address) then
         lo = self.dynamicMemory[address]
     end if
-    return (hi * 256) + lo
+    ret = (hi * 256) + lo
+    self.log.Trace(" -> " + ret)
+    return ret
 end function
 
-// SetGlobalVariable Set the global variable as the opcode references it (number between 0x10 and 0xff)
-MachineState.SetGlobalVariable = function(variable, value)
+// setGlobalVariable Set the global variable as the opcode references it (number between 0x10 and 0xff)
+MachineState.setGlobalVariable = function(variable, value)
     if variable < 16 or variable > 255 then exit("Invalid variable reference " + variable)
     if value < 0 or value > 65535 then exit("Invalid variable value " + value)
     // Set the changed value store.
-    address = self.GlobalVariablesTableAddress + (variable * 2)
-    self.dynamicMemory[address] = floor(variable / 256) % 256  // modulo should be not necessary.
-    self.dynamicMemory[address + 1] = variable % 256
+    address = self.GlobalVariablesTableAddress + ((variable - 16) * 2)  // 0x10
+    self.log.Trace("Setting global variable " + address + " to " + (floor(variable / 256) % 256))
+    self.dynamicMemory[address] = floor(value / 256) % 256  // modulo shouldn't be necessary.
+    self.log.Trace("Setting global variable " + (address + 1) + " to " + (value % 256))
+    self.dynamicMemory[address + 1] = value % 256
 end function
 
 // FromByteAddress Convert a byte address to a physical address
@@ -417,7 +464,8 @@ end function
 MachineState.ReadByte = function(physAddress)
     // Needs to find the right section of memory to read.
     // Could be from a flexible portion.
-    if physAddress < 0 or physAddress > self.FileLen then exit("Invalid variable address " + physAddress)
+    // if physAddress < 0 or physAddress > self.FileLen then exit("Invalid address " + physAddress + " (file len " + self.FileLen + ")")
+    if physAddress < 0 or physAddress > self.storyData.len then exit("Invalid address " + physAddress)
     
     // Is it header memory?
     if self.headerData.hasIndex(physAddress) then
@@ -453,6 +501,7 @@ MachineState.SetWord = function(physAddress, value)
     if self.WordSize == 2 then
         self.SetByte(physAddress, floor(value / 256) % 256)
         self.SetByte(physAddress + 1, value % 256)
+        return
     end if
     self.SetByte(physAddress, floor(value / 16777216) % 256)
     self.SetByte(physAddress + 1, floor(value / 65536) % 256)
@@ -554,12 +603,38 @@ MachineState.SetOutputStreamState = function(streamNumber, tableAddress = null)
     end if
 end function
 
-MachineState.Print = function()
-    // Output stream 3 is unusual in that, while it is selected, no text is sent to any other
-    // output streams which are selected. (However, they remain selected.)
-    // Writing a newline to stream 3 is turned into ZSCII 13.
-end function
+// ====================================================================
 
+// PrintZscii Display a string to the output streams.
+//
+// Text should be a string with characters in zscii codes, not unicode.
+MachineState.PrintZscii = function(text)
+    if self.Stream3.len > 0 then
+        // Stream 3 is a stack containing a map if {"address": 0, "buffer": []}
+        // Writing a newline to stream 3 is turned into ZSCII 13.
+        for ch in text.values()
+            // Should this be bytes?
+            ret.Stream3[-1].buffer.push(ch.code)
+        end for
+
+        // Output stream 3 is unusual in that, while it is selected, no text is sent
+        // to any other output streams which are selected.
+        return
+    end if
+
+    // Stream 1 == screen
+    if self.Stream1Active then
+        self.screen.PrintZscii(text)
+        self.native.DrawScreen(self.screen.Render())
+    end if
+
+    // Stream 2 == transcript
+    if self.Stream2Active then
+        self.native.PrintTranscript(text)
+    end if
+
+    // Stream 4 is just user input.  Printing is not user input.
+end function
 
 // ====================================================================
 
@@ -574,7 +649,7 @@ MachineState.GetObjectPropertyDefault = function(propertyIndex)
     return self.ReadWord(address)
 end function
 
-// GetObjectData Get the base object's opague value.
+// GetObjectData Get the base object's opaque value.
 //
 // The object value should be considered opaque, and the other object calls should be used to query.
 // The returned object is a list of attribute flags array, parent object id, sibling object id,
@@ -636,6 +711,12 @@ MachineState.GetObjectData = function(objectIndex)
     ]
 end function
 
+// GetObjectId Get the ID for the object in the opaque value.
+MachineState.GetObjectId = function(objectValues)
+    if objectValues == null then return 0  // null object is index 0
+    return objectValues[6]
+end function
+
 // GetObjectParent Get the parent object for the given opaque object, or null if it does not exist.
 MachineState.GetObjectParent = function(objectValues)
     if objectValues == null then return null
@@ -661,14 +742,14 @@ MachineState.GetObjectSibling = function(objectValues, siblingId)
 end function
 
 // SetObjectSibling Set the sibling ID for the given opaque object.
-MachineState.SetObjectSibling = function(objectValues)
+MachineState.SetObjectSibling = function(objectValues, siblingIndex)
     if objectValues == null then return
-    objectValues[2] = parentIndex
+    objectValues[2] = siblingIndex
     address = objectValues[5]
     if self.FileVersion <= 3 then
-        self.SetByte(address + 5, parentIndex)
+        self.SetByte(address + 5, siblingIndex)
     else
-        self.SetWord(address + 8, parentIndex)
+        self.SetWord(address + 8, siblingIndex)
     end if
 end function
 
@@ -681,12 +762,12 @@ end function
 // SetObjectChild Set the first child ID for the given opaque object.
 MachineState.SetObjectChild = function(objectValues, childId)
     if objectValues == null then return null
-    objectValues[3] = parentIndex
+    objectValues[3] = childId
     address = objectValues[5]
     if self.FileVersion <= 3 then
-        self.SetByte(address + 6, parentIndex)
+        self.SetByte(address + 6, childId)
     else
-        self.SetWord(address + 10, parentIndex)
+        self.SetWord(address + 10, childId)
     end if
 end function
 
@@ -954,18 +1035,25 @@ end function
 
 // ReadString Read a physical address, up to the char count, of text.
 MachineState.ReadString = function(physAddress, maxLen = null)
+    return self.readStringLen(physAddress, maxLen)[0]
+end function
+
+// readStringLen Read a physical address, up to the char count, of text.  Returns the text + encoded length
+MachineState.readStringLen = function(physAddress, maxLen = null)
     if self.cachedStrings.hasIndex(physAddress) then return self.cachedStrings[physAddress]
     stringAddress = physAddress
 
     // Start by loading the zscii bytes.
     // End-of-string marker is bit 7 == 1 of the first byte of the last pair.
     buffer = []
+    retLen = 0
     // self.log.Debug("Reading @" + stringAddress)
     while maxLen == null or buffer.len < maxLen
         b1 = self.ReadByte(physAddress)
         physAddress = physAddress + 1
         b2 = self.ReadByte(physAddress)
         physAddress = physAddress + 1
+        retLen = retLen + 2
         buffer = buffer + ZsciiSplit(b1, b2)
         // self.log.Trace(" " + buffer.len + ": " + b1 + "/" + b2 + " -> " + buffer[-3] + "/" + buffer[-2] + "/" + buffer[-1])
         if b1 > 127 then
@@ -979,7 +1067,7 @@ MachineState.ReadString = function(physAddress, maxLen = null)
     //   characters in the stream.
     alphabet = 0
     charAlpha = alphabet
-    ret = ""
+    retStr = ""
     escBuff = -1
     abbrevBuff = 0
 
@@ -1008,7 +1096,7 @@ MachineState.ReadString = function(physAddress, maxLen = null)
                 self.log.Debug(" -> " + self.cachedAbbreviations[abbrevIdx])
             end if
 
-            ret = ret + self.cachedAbbreviations[abbrevIdx]
+            retStr = retStr + self.cachedAbbreviations[abbrevIdx]
             abbrevBuff = 0
             continue
 
@@ -1071,6 +1159,8 @@ MachineState.ReadString = function(physAddress, maxLen = null)
                 // perform the lookup
                 idx = self.zsciiAlphabetTables[charAlpha][ch]
                 // self.log.Debug("Looked up " + ch + "/" + charAlpha + " -> " + idx)
+                // Use the zscii character, not the unicode character.
+                retStr = retStr + char(idx)
 
                 // and change the alphabet back
                 charAlpha = alphabet
@@ -1101,20 +1191,16 @@ MachineState.ReadString = function(physAddress, maxLen = null)
                 // perform the lookup
                 idx = self.zsciiAlphabetTables[charAlpha][ch]
                 // self.log.Trace(" -> " + idx)
+                // Use the zscii character, not the unicode character.
+                retStr = retStr + char(idx)
 
                 // and change the alphabet back
                 charAlpha = 0
             end if
         end if
-        if self.zsciiSpecialUnicode.hasIndex(idx) then
-            // self.log.Debug("  zscii " + idx + " -> " + self.zsciiSpecialUnicode[idx])
-            ret = ret + self.zsciiSpecialUnicode[idx]
-        else
-            // assume 1-to-1 unicode translation.
-            // self.log.Debug("  zscii " + idx + " -> " + char(idx))
-            ret = ret + char(idx)
-        end if
+        // Note: the returned string is in zscii, not unicode.
     end for
+    ret = [retStr, retLen]
     // Only cache static strings.
     if stringAddress >= self.StaticMemoryBaseAddress then self.cachedStrings[stringAddress] = ret
     return ret
@@ -1150,7 +1236,8 @@ MachineState.StartGame = function()
     self.native.Reset()
     self.screen.Reset()
     if self.StatusLineType == 0 then
-        self.screen.IsInterpreterStatusLine = true
+        // Only set this when the first input is requested...
+        // self.screen.IsInterpreterStatusLine = true
         self.screen.IsInterpreterScore = true
         self.screen.IsInterpreter24HourTime = false
     else if self.StatusLineType == 2 then
@@ -1161,13 +1248,14 @@ MachineState.StartGame = function()
 
     // Set up the initial call stack.
     if self.FileVersion >= 6 then
-        self.EnterRoutine(self.StartPC, [])
+        self.EnterRoutine(self.StartPC, [], -1)
     else
         // It's just a position, not considered a routine.
         self.callStack.push({
             "stack": [],
             "pc": self.StartPC,
             "locals": [],
+            "returnsRef": -1,
         })
     end if
 end function
@@ -1193,60 +1281,115 @@ end function
 // PopStackFrame Exit the current stack frame.
 //
 // Can never have fewer than 1 active stack frame.
-MachineState.PopStackFrame = function()
+MachineState.PopStackFrame = function(returnValue)
     if self.callStack.len > 1 then
-        self.callStack.pop()
+        prev = self.callStack.pop()
+        // Now, store the return value to the value.
+        // If the returns reference is < 0, then nothing is stored.
+        if prev.returnsRef >= 0 then self.SetVariableRef(prev.returnsRef, returnValue)
     end if
 end function
 
 // EnterRoutine Enter a new routine by adding to the call stack.
 //
+// When the call completes, it stores the return value to the given return variable reference.
+//
 // Routines are never in dynamic memory.
-MachineState.EnterRoutine = function(routine, arguments)
+MachineState.EnterRoutine = function(routine, arguments, returnsRef)
     if routine == 0 then exit("Illegal state: routine 0 must be handled by caller.")
     if self.FileVersion <= 3 and arguments.len > 3 then exit("Invalid argument count: " + arguments.len)
     if self.FileVersion >= 4 and arguments.len > 7 then exit("Invalid argument count: " + arguments.len)
 
     // Routine Packed Address Lookup
     address = (routine * self.packedAddressMult) + self.routineOffset
-    if address < 0 or address > self.FileLen then exit("Invalid routine address " + routine + " -> " + address)
+    if address < 0 or address > self.storyData.len then exit("Invalid routine address " + routine + " -> " + address)
     if address < self.StaticMemoryBaseAddress then exit("Tried calling routine in static memory area: " + address)
 
     variableCount = self.storyData[address]
+    self.log.Trace("Entering routine " + routine + " @" + address + ", " + variableCount + " local variables")
     address = address + 1
     // Initialize local variables
-    locals = []
-    if variableCount < arguments.len then exit("Too few local variables (" + variableCount + ") for argument count (" + arguments.len + ")")
-    for i in range(1, variableCount)
-        // Versions 5+, initial value for local variable is 0
-        val = 0
-        if self.FileVersion <= 4 then
-            // initial values in versions 1-4 is the 2-byte words after the count.
-            val = (self.storyData[address] * 256) + self.storyData[address]
-            address = address + 2
-        end if
-        locals.push(val)
-    end for
+    callLocals = []
+    // Seems like this happens.  Could be a bad opcode reader, though.
+    // if variableCount < arguments.len then exit("Too few local variables (" + variableCount + ") for argument count (" + arguments.len + ")")
+    if variableCount > 0 then
+        for i in range(1, variableCount)
+            // Versions 5+, initial value for local variable is 0
+            val = 0
+            if self.FileVersion <= 4 then
+                // initial values in versions 1-4 is the 2-byte words after the count.
+                val = (self.storyData[address] * 256) + self.storyData[address]
+                address = address + 2
+            end if
+            // self.log.Trace(" - Default local value " + i + " = " + val)
+            callLocals.push(val)
+        end for
+    end if
 
     // The arguments are written into the local variables (argument 1 into local 1 and so on).
     // It is legal for there to be more arguments than local variables (any spare arguments
     // are thrown away) or for there to be fewer.
     argCount = arguments.len
     if arguments.len > variableCount then argCount = variableCount
-    for i in range(0, argCount - 1)
-        locals[i] = arguments[i]
-    end for
+    if argCount > 0 then
+        for i in range(0, argCount - 1)
+            callLocals[i] = arguments[i]
+            self.log.Trace(" - Setting local variable " + i + " to argument value " + arguments[i])
+        end for
+    end if
 
+    self.log.Trace(" - Adding to call stack @" + address)
     self.callStack.push({
         "stack": [],
         "pc": address,
-        "locals": locals,
+        "locals": callLocals,
+        "returnsRef": returnsRef,
     })
+    self.log.Trace(" - Entered stack frame " + self.callStack.len - 1)
 end function
 
-// Move the current stack frame's instruction pointer to the given address.
+// JumpToAddress Move the current stack frame's instruction pointer to the given address.
 MachineState.JumpToAddress = function(physAddress)
     self.callStack[-1].pc = physAddress
+end function
+
+// JumpByOffset Move the current stack frame's instruction pointer by the number of bytes.
+// Can be negative.
+MachineState.JumpByOffset = function(byteOffset)
+    top = self.callStack[-1]
+    top.pc = top.pc + byteOffset
+end function
+
+// PerformBranch Perform the correct branching logic, based on the opcode branch value.
+//
+// Branching is always conditional.  The branch argument contains within it a
+// branch on success/failure flag that must be used.
+MachineState.PerformBranch = function(branch, condition)
+    if branch == null then exit("Invalid opcode: requires branch")
+    if (condition != 0 and branch.b == true) or (condition == 0 and branch.b == false) then
+        self.log.Trace("Branching on " + branch.t)
+        if branch.t == "a" then
+            // Jump to an address
+            self.JumpToAddress(branch.a)
+            return
+        end if
+        // t == r, so return.
+        self.PopStackFrame(branch.r)
+    else
+        self.log.Trace("No branching - condition failed.")
+    end if
+end function
+
+// Signed16 Return the 16-bit value as a signed value
+MachineState.Signed16 = function(value)
+    if value >= 32768 then return value - 65536
+    return value
+end function
+
+// Unsign16 Return the 16-bit signed value as an unsigned value
+MachineState.Unsign16 = function(value)
+    if value < 0 then return 65536 + value
+    return value
 end function
 
 // NextInstruction Get the next instruction in the current stack frame.
@@ -1257,11 +1400,23 @@ MachineState.NextInstruction = function()
     return self.instructionAt(self.callStack[-1].pc, STD_OPCODE_TABLE, EXT_OPCODE_TABLE)
 end function
 
+// AdvanceToInstructionAfterString Gets the string at the current PC, returns it, and advances the PC after the string.
+// Very special instruction for supporting some operands.
+MachineState.AdvanceToInstructionAfterString = function()
+    stack = self.callStack[-1]
+    strLen = self.readStringLen(stack.pc)
+    stack.pc = stack.pc + strLen[1]
+    return strLen[0]
+end function
+
 // getInstructionAt Read the instruction at the given address.
 //
 // Returns [opcodeName, operandsList, nextInstructionAddress, storedValue (maybe null), branchValue (maybe null)]
 // If the opcode isn't found, then opcodeName is null.  If the opcode is invalid, null is returned.
-// The operand is either {"c": constantNumber, "t": "c"} or {"v": variable reference, "t": "v"}.
+// The operand is either:
+//     {"c": constantNumber, "t": "c", "s": (1 or 2; the number of bytes for the value)}
+// or
+//     {"v": variable reference, "t": "v", "c": value, "s": 2}.
 // If a branch value is returned, then it is either {"r": return value, "t": "r"} or {"a": jump address, "t": "a"},
 // and it will also include the "b" value to mean branch-on (value - either true or false).
 //
@@ -1271,21 +1426,23 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
     // Note: instructions should be only in static memory.
     // This gives us a touch of performance boost.
     if physAddress < self.StaticMemoryBaseAddress then exit("Tried to run instruction in dynamic memory " + physAddress)
+    // For debugging...
+    instructionAddress = physAddress
 
-    self.log.Debug("Loading instruction at " + physAddress)
+    // self.log.Debug("Loading instruction at " + physAddress)
     val1 = self.storyData[physAddress]
-    self.log.Trace("  - opcode " + val1)
+    // self.log.Trace("  - opcode " + val1)
     physAddress = physAddress + 1
     ops = opcodeList
     if self.FileVersion >= 5 and val1 == 190 then
         // extended opcodes.
         ops = extendedOpcodeList
         val1 = self.storyData[physAddress]
-        self.log.Trace("  - extended opcode " + val1)
+        // self.log.Trace("  - extended opcode " + val1)
         physAddress = physAddress + 1
     end if
     if val1 < 0 or val1 >= ops.len then
-        self.log.Warn("Discovered unknown opcode " + val1)
+        self.log.Warn("Discovered unknown opcode " + val1 + " @" + instructionAddress)
         return null
     end if
     opTypeVersionList = ops[val1]
@@ -1301,12 +1458,12 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
         end if
     end for
     if opCodeInfo == null then
-        self.log.Warn("Discovered incompatible opcode " + val1)
+        self.log.Warn("Discovered incompatible opcode " + val1 + " @" + instructionAddress)
         return null
     end if
 
     opcodeMnemonic = opCodeInfo[1]
-    self.log.Trace("  - [" + opcodeMnemonic + "]")
+    // self.log.Trace(opcodeMnemonic)
 
     // Load operands.
     // Operand type code is a list of each operand type,
@@ -1321,12 +1478,14 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
         // followed by variable (and no third or fourth opcode).
         operandTypeIds = [self.storyData[physAddress]]
         physAddress = physAddress + 1
+        // self.log.Trace("  - Variable operands: " + operandTypeIds[0])
 
         if operandTypeCodeList[0] == 4 then
             // In the special case of the “double variable” VAR opcodes call_vs2 and call_vn2
             // (opcode numbers 12 and 26), a second byte of types is given, containing the types
             // for the next four operands.
             operandTypeIds.push(self.storyData[physAddress])
+            // self.log.Trace("  - Variable operands: " + operandTypeIds[1])
             physAddress = physAddress + 1
         end if
 
@@ -1337,7 +1496,8 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
             while idx >= 1
                 // This will set the type code to 3 on omitted, which is fine.
                 operandTypeCodeList.push(floor(typeId / idx) % 4)
-                idx = floor(idx / 2)
+                // self.log.Trace("  - " + idx + ": " + operandTypeCodeList.len + ": " + operandTypeCodeList[-1])
+                idx = floor(idx / 4)
             end while 
         end for
     end if
@@ -1346,27 +1506,29 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
     for operandTypeCode in operandTypeCodeList
         if operandTypeCode == 0 then
             // Large constant; 2 byte operand.
-            operands.push({"t": "c", "c": (self.storyData[physAddress] * 256) + self.storyData[physAddress]})
+            operands.push({"t": "c", "s": 2, "c": (self.storyData[physAddress] * 256) + self.storyData[physAddress + 1]})
             physAddress = physAddress + 2
-            self.log.Trace("  - operand constant " + operands[-1].c)
+            self.log.Trace("  - operand long constant " + operands[-1].c)
             continue
         end if
         if operandTypeCode == 1 then
             // Small constant; 1 byte operand.
-            operands.push({"t": "c", "c": self.storyData[physAddress]})
+            operands.push({"t": "c", "s": 1, "c": self.storyData[physAddress]})
             physAddress = physAddress + 1
             self.log.Trace("  - operand constant " + operands[-1].c)
             continue
         end if
         if operandTypeCode == 2 then
             // Variable reference; 1 byte operand.
-            operands.push({"t": "v", "v": self.storyData[physAddress]})
+            opVal = self.storyData[physAddress]
+            operands.push({"t": "v", "s": 2, "v": opVal, "c": self.GetVariableRef(opVal)})
+            self.log.Trace("  - operand variable @" + physAddress + " reference " + operands[-1].v + " == " + operands[-1].c)
             physAddress = physAddress + 1
-            self.log.Trace("  - operand variable reference " + operands[-1].v)
             // continue
         end if
         // If 3, then it's from an omitted variable count.
     end for
+    self.log.Info(str(instructionAddress) + " " + opcodeMnemonic + " " + operands)
 
     storesVariable = null
     if opCodeInfo[3] then
@@ -1401,20 +1563,22 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
             // If bit 6 is set, then the branch occupies 1 byte only, and the
             // "offset" is in the range 0 to 63, given in the bottom 6 bits.
             offset = val1 % 64  // get bottom 6 bits
+            self.log.Trace("  - branch base offset = " + offset)
         else
             // If bit 6 is clear, then the offset is a signed 14-bit number given in bits 0 to 5 of the
             // first byte followed by all 8 of the second.
             val2 = self.storyData[physAddress]
             physAddress = physAddress + 1
 
-            // To get the offset, we'll first compute it as though it's a positive 13-bit
+            // To get the offset, we'll first compute it as though it's a positive 14-bit
             // number, then, if negative, handle that.
-            offset = ((val1 % 32) * 256) + val2
+            offset = ((val1 % 64) * 256) + val2
+            self.log.Trace("  - branch base offset = " + offset)
             
-            // bit 6 is clear, so bit 5 is now the sign bit.
-            if val1 >= 32 then
+            if offset >= 8192 then  // 0x2000
                 // Now make it negative.  This is done with a 2's complement.
-                offset = 8192 - offset
+                offset = offset - 16384  // 0x4000
+                self.log.Trace("  - ... negated to " + offset)
             end if
         end if
 
