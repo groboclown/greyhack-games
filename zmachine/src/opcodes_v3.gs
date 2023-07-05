@@ -64,8 +64,7 @@ OpV1_GetChild = function(machine, operands, storesVarRef, branch)
     if storesVarRef == null then exit("Invalid opcode 'get_child': requires storesVarRef")
     if branch == null then exit("Invalid opcode 'get_child': requires branch label")
     object1 = machine.GetObjectData(operands[0].c)
-    childId = machine.GetObjectChild(object1)
-    if childId == null then childId = 0  // the null object.
+    childId = machine.GetObjectId(machine.GetObjectChild(object1))
     machine.SetVariableRef(storesVarRef, childId)
     machine.PerformBranch(branch, childId != 0)
 end function
@@ -78,7 +77,7 @@ OpV1_GetParent = function(machine, operands, storesVarRef, branch)
     if operands.len != 1 then exit("Invalid opcode 'get_parent': requires 1 arguments")
     if storesVarRef == null then exit("Invalid opcode 'get_parent': requires storesVarRef")
     object1 = machine.GetObjectData(operands[0].c)
-    parentId = machine.GetObjectParent(object1)
+    parentId = machine.GetObjectId(machine.GetObjectParent(object1))
     if parentId == null then parentId = 0  // the null object.
     machine.SetVariableRef(storesVarRef, parentId)
 end function
@@ -92,9 +91,8 @@ OpV1_GetProperty = function(machine, operands, storesVarRef, branch)
     if operands.len != 2 then exit("Invalid opcode 'get_prop': requires 2 arguments")
     if storesVarRef == null then exit("Invalid opcode 'get_prop': requires storesVarRef")
     object1 = machine.GetObjectData(operands[0].c)
-    prop = machine.GetObjectProperty(object1, operands[1].c)
-    value = machine.GetObjectPropertyWord(prop, operands[1].c)
-    if value == null then exit("Encountered")
+    value = machine.GetObjectPropertyWord(object1, operands[1].c)
+    if value == null then exit("Encountered null property and no default value")
     machine.SetVariableRef(storesVarRef, value)
 end function
 Opcodes.get_prop_v1 = @OpV1_GetProperty
@@ -107,7 +105,7 @@ OpV1_GetSibling = function(machine, operands, storesVarRef, branch)
     if storesVarRef == null then exit("Invalid opcode 'get_sibling': requires storesVarRef")
     if branch == null then exit("Invalid opcode 'get_sibling': requires branch label")
     object1 = machine.GetObjectData(operands[0].c)
-    siblingId = machine.GetObjectSibling(object1)
+    siblingId = machine.GetObjectId(machine.GetObjectSibling(object1))
     if siblingId == null then siblingId = 0  // the null object.
     machine.SetVariableRef(storesVarRef, siblingId)
     machine.PerformBranch(branch, siblingId != 0)
@@ -146,7 +144,8 @@ OpV1_InsertObject = function(machine, operands, storesVarRef, branch)
     OpCodeLogger.Debug("Moving object " + operands[0].c + " to first child of " + operands[1].c)
     obj = machine.GetObjectData(operands[0].c)
     if obj == null then exit("Invalid opcode 'insert_obj': first argument is not an object")
-    dest = machine.GetObjectData(operands[0].c)
+    destId = operands[1].c
+    dest = machine.GetObjectData(destId)
     if dest == null then exit("Invalid opcode 'insert_obj': second argument is not an object")
 
     // Whatever obj's previous sibling is, reassign it's sibling to obj's sibling.
@@ -186,9 +185,13 @@ OpV1_InsertObject = function(machine, operands, storesVarRef, branch)
     end if
 
     // Insert the object into the new tree.
+    OpCodeLogger.Trace("  setting destination object " + destId + " as parent of " + objId)
+    machine.SetObjectParent(obj, destId)
     destChild = machine.GetObjectChild(dest)  // might be null
     destChildId = machine.GetObjectId(destChild)  // could be 0, the null object.
+    OpCodeLogger.Trace("  moving destination object " + destId + " first child " + destChildId + " to sibling of " + objId)
     machine.SetObjectSibling(obj, destChildId)
+    OpCodeLogger.Trace("  setting destination object " + destId + " first child to " + objId)
     machine.SetObjectChild(dest, objId)
 end function
 Opcodes.insert_obj_v1 = @OpV1_InsertObject
@@ -215,6 +218,32 @@ OpV1_JumpEqual = function(machine, operands, storesVarRef, branch)
     machine.PerformBranch(branch, false)
 end function
 Opcodes.je_v1 = @OpV1_JumpEqual
+
+// OpV1_JumpGreater Jump if greater
+//      jg a b ?(label)
+// Jump if a is greater than b (signed)
+OpV1_JumpGreater = function(machine, operands, storesVarRef, branch)
+    if operands.len != 2 then exit("Invalid opcode 'jg': requires 2 arguments")
+    if branch == null then exit("Invalid opcode 'jg': requires branch label")
+
+    v1 = machine.Signed16(operands[0].c)
+    v2 = machine.Signed16(operands[1].c)
+    machine.PerformBranch(branch, v1 > v2)
+end function
+Opcodes.jg_v1 = @OpV1_JumpGreater
+
+// OpV1_JumpLess Jump if less
+//      jl a b ?(label)
+// Jump if a is less than b (signed)
+OpV1_JumpLess = function(machine, operands, storesVarRef, branch)
+    if operands.len != 2 then exit("Invalid opcode 'jl': requires 2 arguments")
+    if branch == null then exit("Invalid opcode 'jl': requires branch label")
+
+    v1 = machine.Signed16(operands[0].c)
+    v2 = machine.Signed16(operands[1].c)
+    machine.PerformBranch(branch, v1 < v2)
+end function
+Opcodes.jl_v1 = @OpV1_JumpLess
 
 // OpV1_Jump
 //     jump (offset)
@@ -381,6 +410,15 @@ OpV1_Ret = function(machine, operands, storesVarRef, branch)
     machine.PopStackFrame(operands[0].c)
 end function
 Opcodes.ret_v1 = @OpV1_Ret
+
+// OpV1_RetPopped
+//     ret_popped
+// Pops the top of the stack, and returns that value.
+OpV1_RetPopped = function(machine, operands, storesVarRef, branch)
+    retval = machine.GetVariableRef(0)
+    machine.PopStackFrame(retval)
+end function
+Opcodes.ret_popped_v1 = @OpV1_RetPopped
 
 // OpV1_Rtrue
 //     rtrue

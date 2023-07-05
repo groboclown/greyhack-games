@@ -9,14 +9,14 @@ Logger.ERROR = 5
 Logger.New = function(src)
     ret = new Logger
     ret.src = src
-    ret.level = Logger.TRACE
+    ret.level = Logger.WARNING
     return ret
 end function
 
 Logger.LEVELNAME = {
     Logger.TRACE:   "<color=#606060>[TRACE] ",
     Logger.DEBUG:   "<color=#808080>[DEBUG] ",
-    Logger.VERBOSE: "<color=#3030a0>[VRBSE] ",
+    Logger.VERBOSE: "<color=#5050ff>[VRBSE] ",
     Logger.INFO:    "<color=#901090>[ INFO] ",
     Logger.WARNING: "<color=#a08060>[ WARN] ",
     Logger.ERROR:   "<color=#f01010>[ERROR] ",
@@ -51,4 +51,18 @@ Logger.Error = function(msg)
     self.Log(Logger.ERROR, msg)
 end function
 
+// OpCodeLogger Logger used by opcodes.
 OpCodeLogger = Logger.New("opcodes")
+
+// Log machine parsing progress.
+// Used to debug the machine parser and opcode handling.
+// A bit of native nonsense has crept into this...
+//get_shell.host_computer.touch(home_dir + "/zmachine-out.txt")
+//MACHINE_PROGRESS = get_shell.host_computer.File(home_dir + "/zmachine-out.txt")
+//MACHINE_PROGRESS.set_content("")
+MachineLog = function(text)
+    //MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content() + text)
+end function
+MachineLogln = function(text)
+    //MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content() + text + char(10))
+end function

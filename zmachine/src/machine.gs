@@ -1,4 +1,3 @@
-
 // MachineState The machine state.
 MachineState = {}
 
@@ -394,6 +393,7 @@ MachineState.SetVariableRef = function(variableRef, value)
     if variableRef == 0 then
         // push onto the stack
         self.log.Trace(":: Stack <- " + value)
+        MachineLogln("  [stack <- " + value + "]")
         self.callStack[-1].stack.push(value)
         return
     end if
@@ -405,6 +405,7 @@ MachineState.SetVariableRef = function(variableRef, value)
         callLocals.push(0)
     end while
     self.log.Trace(":: Local " + (variableRef - 1) + " <- " + value)
+    MachineLogln("  [local " + (variableRef - 1) + " <- " + value + "]")
     callLocals[variableRef - 1] = value
 end function
 
@@ -434,7 +435,8 @@ MachineState.setGlobalVariable = function(variable, value)
     if value < 0 or value > 65535 then exit("Invalid variable value " + value)
     // Set the changed value store.
     address = self.GlobalVariablesTableAddress + ((variable - 16) * 2)  // 0x10
-    self.log.Trace(":: Global @" + address + " <- " + (floor(variable / 256) % 256))
+    MachineLogln("  [global " + (variable - 16) + " <- " + value + "]")
+    self.log.Trace(":: Global @" + address + " <- " + (floor(value / 256) % 256))
     self.dynamicMemory[address] = floor(value / 256) % 256  // modulo shouldn't be necessary.
     self.log.Trace(":: Global @" + (address + 1) + " <- " + (value % 256))
     self.dynamicMemory[address + 1] = value % 256
@@ -498,6 +500,7 @@ end function
 // SetWord Game accessible memory write
 MachineState.SetWord = function(physAddress, value)
     // Because of the frequency of this call, it should be optimized.
+    MachineLogln("  [mem @" + physAddress + " <- word " + value + "]")
     if self.WordSize == 2 then
         self.SetByte(physAddress, floor(value / 256) % 256)
         self.SetByte(physAddress + 1, value % 256)
@@ -514,6 +517,8 @@ MachineState.SetByte = function(physAddress, value)
     // It is illegal for a game to attempt to write to static memory.
     if physAddress < 0 or physAddress >= self.StaticMemoryBaseAddress then exit("Illegal address: " + physAddress)
     if value < 0 or value > 255 then exit("Illegal value: " + value)
+
+    MachineLogln("  [mem @" + physAddress + " <- byte " + value + "]")
 
     // flags 2 bits 7-0
     if physAddress == 16 then  // 0x10
@@ -717,7 +722,7 @@ MachineState.GetObjectId = function(objectValues)
     return objectValues[6]
 end function
 
-// GetObjectParent Get the parent object ID for the given opaque object, or null if it does not exist.
+// GetObjectParent Get the parent object for the given opaque object, or null if it does not exist.
 MachineState.GetObjectParent = function(objectValues)
     if objectValues == null then return null
     return self.GetObjectData(objectValues[1])
@@ -735,7 +740,7 @@ MachineState.SetObjectParent = function(objectValues, parentIndex)
     end if
 end function
 
-// GetObjectSibling Get the sibling object ID for the given opaque object, or null if it does not exist.
+// GetObjectSibling Get the sibling object for the given opaque object, or null if it does not exist.
 MachineState.GetObjectSibling = function(objectValues, siblingId)
     if objectValues == null then return null
     return self.GetObjectData(objectValues[2])
@@ -753,7 +758,7 @@ MachineState.SetObjectSibling = function(objectValues, siblingIndex)
     end if
 end function
 
-// GetObjectChild Get the first child object ID for the given opaque object, or null if it does not exist.
+// GetObjectChild Get the first child object for the given opaque object, or null if it does not exist.
 MachineState.GetObjectChild = function(objectValues)
     if objectValues == null then return null
     return self.GetObjectData(objectValues[3])
@@ -1329,6 +1334,7 @@ MachineState.EnterRoutine = function(routine, arguments, returnsRef)
 
     variableCount = self.storyData[address]
     self.log.Trace("Call routine " + routine + " @" + address + ", " + variableCount + " local variables")
+    MachineLog("[routine " + routine + " @" + address + ", frame " + self.callStack.len + ", " + variableCount + " locals")
     address = address + 1
     // Initialize local variables
     callLocals = []
@@ -1368,6 +1374,7 @@ MachineState.EnterRoutine = function(routine, arguments, returnsRef)
         "returnsRef": returnsRef,
     })
     self.log.Trace(" :: frame " + (self.callStack.len - 1) + ", locals " + self.callStack[-1].locals)
+    MachineLogln(" == " + self.callStack[-1].locals + "]")
 end function
 
 // JumpToAddress Move the current stack frame's instruction pointer to the given address.
@@ -1392,13 +1399,16 @@ MachineState.PerformBranch = function(branch, condition)
         // self.log.Trace("Branching on " + branch.t)
         if branch.t == "a" then
             // Jump to an address
+            MachineLogln(" ; branch base offset ? ; jump to " + branch.a)
             self.JumpToAddress(branch.a)
             return
         end if
+        MachineLogln(" ; branch returning " + branch.r + " ; jumping")
         // t == r, so return.
         self.PopStackFrame(branch.r)
-    //else
-    //    self.log.Trace("No branching - condition failed.")
+    else
+        MachineLogln(" ; branch base offset ? ; no jump")
+        // self.log.Trace("No branching - condition failed.")
     end if
 end function
 
@@ -1451,6 +1461,7 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
     // Note: instructions should be only in static memory.
     // This gives us a touch of performance boost.
     if physAddress < self.StaticMemoryBaseAddress then exit("Tried to run instruction in dynamic memory " + physAddress)
+    MachineLog(str(physAddress) + " ")
     // For debugging...
     instructionAddress = physAddress
 
@@ -1489,7 +1500,6 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
 
     opcodeMnemonic = opCodeInfo[1]
     // self.log.Trace(opcodeMnemonic)
-    if opcodeMnemonic == "loadb_v1" then self.log.Trace(opcodeMnemonic + " " + val1)
 
     // Load operands.
     // Operand type code is a list of each operand type,
@@ -1505,7 +1515,6 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
         operandTypeIds = [self.storyData[physAddress]]
         physAddress = physAddress + 1
         // self.log.Trace("  - Variable operands: " + operandTypeIds[0])
-        if opcodeMnemonic == "loadb_v1" then self.log.Trace("  - Variable operands: " + operandTypeIds[0])
 
         if operandTypeCodeList[0] == 4 then
             // In the special case of the “double variable” VAR opcodes call_vs2 and call_vn2
@@ -1513,7 +1522,6 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
             // for the next four operands.
             operandTypeIds.push(self.storyData[physAddress])
             // self.log.Trace("  - Variable operands: " + operandTypeIds[1])
-            if opcodeMnemonic == "loadb_v1" then self.log.Trace("  - Variable operands: " + operandTypeIds[1])
             physAddress = physAddress + 1
         end if
 
@@ -1525,7 +1533,6 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
                 // This will set the type code to 3 on omitted, which is fine.
                 operandTypeCodeList.push(floor(typeId / idx) % 4)
                 // self.log.Trace("  - " + idx + ": " + operandTypeCodeList.len + ": " + operandTypeCodeList[-1])
-                if opcodeMnemonic == "loadb_v1" then self.log.Trace("  - " + idx + ": " + operandTypeCodeList.len + ": " + operandTypeCodeList[-1])
                 idx = floor(idx / 4)
             end while 
         end for
@@ -1538,7 +1545,6 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
             operands.push({"t": "c", "s": 2, "c": (self.storyData[physAddress] * 256) + self.storyData[physAddress + 1]})
             physAddress = physAddress + 2
             // self.log.Trace("  - operand long constant " + operands[-1].c)
-            if opcodeMnemonic == "loadb_v1" then self.log.Trace("  - operand long constant " + operands[-1].c)
             continue
         end if
         if operandTypeCode == 1 then
@@ -1546,15 +1552,15 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
             operands.push({"t": "c", "s": 1, "c": self.storyData[physAddress]})
             physAddress = physAddress + 1
             // self.log.Trace("  - operand constant " + operands[-1].c)
-            if opcodeMnemonic == "loadb_v1" then self.log.Trace("  - operand constant " + operands[-1].c)
             continue
         end if
         if operandTypeCode == 2 then
             // Variable reference; 1 byte operand.
             opVal = self.storyData[physAddress]
+            MachineLog(" [@" + physAddress + " var " + opVal + "] ")
             operands.push({"t": "v", "s": 2, "v": opVal, "c": self.GetVariableRef(opVal)})
+
             // self.log.Trace("  - operand variable @" + physAddress + " reference " + operands[-1].v + " == " + operands[-1].c)
-            if opcodeMnemonic == "loadb_v1" then self.log.Trace("  - operand variable @" + physAddress + " reference " + operands[-1].v + " == " + operands[-1].c)
             physAddress = physAddress + 1
             // continue
         end if
@@ -1566,7 +1572,6 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
         // Stores a value.  Next byte is the variable reference.
         storesVariable = self.storyData[physAddress]
         // self.log.Trace("  - stores to variable reference " + storesVariable)
-        if opcodeMnemonic == "loadb_v1" then self.log.Trace("  - stores to variable reference " + storesVariable)
         physAddress = physAddress + 1
     end if
 
@@ -1629,6 +1634,19 @@ MachineState.instructionAt = function(physAddress, opcodeList, extendedOpcodeLis
             // self.log.Trace("  - branch jumps to " + branch.a)
         end if
     end if
+
+    if opcodeMnemonic == "call_v1" then
+        DEBUG_MNEMONIC = "z_call_vs"
+    else
+        DEBUG_MNEMONIC = "z_" + opcodeMnemonic[:-3]
+    end if
+    MachineLog(DEBUG_MNEMONIC + " [")
+    DEBUG_PRE = ""
+    for DEBUG_OPER in operands
+        MachineLog(DEBUG_PRE + DEBUG_OPER.c)
+        DEBUG_PRE = ", "
+    end for
+    MachineLogln("]")
 
     self.log.Verbose(str(instructionAddress) + " " + opcodeMnemonic + " " + operands + " " + storesVariable + " " + branch)
     // [opcodeName, operandsList, nextInstructionAddress, storedValue (maybe null), branchValue (maybe null)]

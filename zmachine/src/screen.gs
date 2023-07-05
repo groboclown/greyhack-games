@@ -20,6 +20,9 @@ DefaultColorSpace24 = {
     // 14: reserved
     // 15: transparent (V6 only)
 }
+// TEST
+//"<color=#000000>black<color=#e80000>red<color=#00d000>green<color=#0068b0>blue"
+//"<color=#f800f8>magenta<color=#00e8e8>cyan<color=#f8f8f8>white<color=#b0b0b0>light grey<color=#585858>dark grey"
 
 Screen = {}
 
@@ -43,7 +46,7 @@ Screen.New = function(width, height)
     ret.DefaultBackgroundColor24 = ret.ColorSpace24[ret.DefaultBackgroundColor]
     ret.DefaultBackgroundColor15 = ret.ColorSpace15[ret.DefaultBackgroundColor]
 
-    ret.DefaultForegroundColor = 4
+    ret.DefaultForegroundColor = 9
     ret.DefaultForegroundColor24 = ret.ColorSpace24[ret.DefaultForegroundColor]
     ret.DefaultForegroundColor15 = ret.ColorSpace15[ret.DefaultForegroundColor]
 
@@ -57,15 +60,15 @@ Screen.New = function(width, height)
     ret.StatusLineScore = 0  // or hours
     ret.StatusLineTurn = 0  // or minutes
 
-    ret.StatusBackgroundColor = 4
-    ret.StatusForegroundColor = 2
+    ret.StatusBackgroundColor = ret.DefaultForegroundColor
+    ret.StatusForegroundColor = ret.DefaultBackgroundColor
 
     ret.Windows = [
         // Window ordering here doesn't necessarily match the opcode names.
         // Upper window
-        ScreenWindow.New(width, 0, 2, 4, ret.ColorSpace24, ret.ColorSpace15),
+        ScreenWindow.New(width, 0, ret.DefaultForegroundColor, ret.DefaultBackgroundColor, ret.ColorSpace24, ret.ColorSpace15),
         // Lower window
-        ScreenWindow.New(width, height, 2, 4, ret.ColorSpace24, ret.ColorSpace15),
+        ScreenWindow.New(width, height, ret.DefaultForegroundColor, ret.DefaultBackgroundColor, ret.ColorSpace24, ret.ColorSpace15),
     ]
     ret.ActiveWindowIndex = 1
     // In all versions, the lower window always buffers text by default.
@@ -86,12 +89,12 @@ Screen.Reset = function()
     self.StatusLineScore = 0
     self.StatusLineTurn = 0
 
-    self.StatusBackgroundColor = 4
-    self.StatusForegroundColor = 2
+    self.StatusBackgroundColor = self.DefaultForegroundColor
+    self.StatusForegroundColor = self.DefaultForegroundColor
 
     self.Windows = [
-        ScreenWindow.New(self.Width, 0, 2, 4, self.ColorSpace24, self.ColorSpace15),
-        ScreenWindow.New(self.Width, self.Height, 2, 4, self.ColorSpace24, self.ColorSpace15),
+        ScreenWindow.New(self.Width, 0, self.DefaultForegroundColor, self.DefaultBackgroundColor, self.ColorSpace24, self.ColorSpace15),
+        ScreenWindow.New(self.Width, self.Height, self.DefaultForegroundColor, self.DefaultBackgroundColor, self.ColorSpace24, self.ColorSpace15),
     ]
     self.ActiveWindowIndex = 1
     self.Windows[1].IsBufferingText = true
@@ -252,10 +255,13 @@ ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, col
     return ret
 end function
 
+ScreenWindow__EOL = char(13)
+ScreenWindow__TAB = char(9)
+ScreenWindow__WhiteSpace = " " + ScreenWindow__TAB + ScreenWindow__EOL
+
 // PrintZscii Print the zscii string to the window.
 ScreenWindow.PrintZscii = function(text)
     // Append to the current line.  Optionally word wrap (if buffer mode is on).
-    // FIXME needs proper, nice word-wrap.
 
     // Early check to prevent more complex behavior.
     if self.Height <= 0 then return
@@ -270,7 +276,9 @@ ScreenWindow.PrintZscii = function(text)
     buff = ""
     nextX = self.CursorX
     for ch in text.values()
-        if nextX >= self.Width or ch == char(13) then
+        drawChar = true
+        if ch == ScreenWindow__EOL then
+            drawChar = false  // handle EOL implicitly.
             if buff.len > 0 then
                 // There has already been stuff put into the buffer, and the cursor was fine then.
                 // So we can draw it on the current line.
@@ -283,14 +291,90 @@ ScreenWindow.PrintZscii = function(text)
                 })
                 buff = ""
             end if
-            if not self.CanBufferText then return  // can't word-wrap, so exit immediately.
             nextX = 0
             self.CursorX = 0
             self.CursorY = self.CursorY + 1
             if self.checkY() then return  // can't draw anything else
+        else if nextX >= self.Width then
+            // Reached window width.
+            if not self.CanBufferText then
+                // No word-wrap.  Just insert the existing text and keep searching for EOL.
+                drawChar = false
+                if buff.len > 0 then
+                    // There has already been stuff put into the buffer, and the cursor was fine then.
+                    // So we can draw it on the current line.
+                    self.FormattedLines[self.CursorY].push({
+                        "t": buff,
+                        "fg": fg,
+                        "bg": bg,
+                        "b": self.Bold,
+                        "i": self.Italic,
+                    })
+                    buff = ""
+                end if
+            else
+                // word-wrap enabled
+                if ScreenWindow__WhiteSpace.indexOf(ch) == null then
+                    // Need to word wrap on this non-whitespace character.
+                    // Only wrap within the last format group.  The buffer is
+                    // already under the width of the line, because it's been built
+                    // up character by character.
+                    pos = buff.len - 1
+                    while pos >= 0 and ScreenWindow__WhiteSpace.indexOf(buff[pos]) == null
+                        pos = pos - 1
+                    end while
+                    if pos < 0 then
+                        // No break found.  Otherwise, move the text to the next line.
+                        if nextX == 0 then
+                            // The buffer takes up the whole window width.  Need to
+                            // hard break the text.
+                            prevLine = buff[:self.Width-1] + "-"
+                            buff = buff[self.Window-1:]
+                        else
+                            // Keep the existing text in the buffer.  Let the line
+                            // feed do its magic.
+                            prevLine = ""
+                        end if
+                    else
+                        // Found a break part way through the buffer.  Break it up.
+                        prevLine = buff[:pos]
+                        buff = buff[pos+1:]  // skip past the whitespace character
+                    end if
+                else
+                    // word wrap enabled and it's whitespace, so don't draw the character.
+                    drawChar = false
+                    prevLine = buff
+                    buff = ""
+                end if
+            end if
+
+            self.FormattedLines[self.CursorY].push({
+                "t": prevLine,
+                "fg": fg,
+                "bg": bg,
+                "b": self.Bold,
+                "i": self.Italic,
+            })
+
+            // Handle cursor wrapping
+            nextX = buff.len
+            self.CursorX = buff.len
+            self.CursorY = self.CursorY + 1
+            if self.checkY() then return  // can't draw anything else
+        else if ch == ScreenWindow__TAB then
+            if nextX == 0 then
+                // First character of the line is a tab, so indent the line.
+                // Assume that the window width is more than 4.
+                ch = "    "
+            else
+                // Tab in the middle of text.  Use a space.
+                ch = " "
+            end if
         end if
-        buff = buff + ch
-        nextX = nextX + 1
+        if drawChar then
+            buff = buff + ch
+            nextX = nextX + ch.len
+        end if
     end for
     if buff.len > 0 then
         // There has already been stuff put into the buffer, and the cursor was fine then.

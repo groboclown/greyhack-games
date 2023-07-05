@@ -158,7 +158,7 @@ Native.DrawScreen = function(formatLines, drawLastLine)
         // The values are reset on each new line.
         line = ""
         lineCols = 0
-        last = {"t": "", "fg": "", "bg": "", "b": false, "i": false, "ft": 1}
+        last = {"t": "", "fg": "#000000", "bg": "#000000", "b": false, "i": false, "ft": 1}
         for fmt in fmtParts
             // Don't add formatting if there's no text.
             if fmt.t.len <= 0 then continue
@@ -185,11 +185,18 @@ Native.DrawScreen = function(formatLines, drawLastLine)
                 end if
             end for
         end for
+        // Explicitly add a final non-whitespace character to ensure the full
+        // background color is placed.
+        while last.t.len < self.ScreenWidth
+            last.t = last.t + " "
+        end while
+
         line = line + self.renderFmt(last, lineCols)
+        line = line + "<color=" + last.bg + ">" + char(183)
         self.screenContents.push(line)
     end for
 
-    // self.drawCurrentScreen(drawLastLine)
+    self.drawCurrentScreen(drawLastLine)
 end function
 
 Native.renderFmt = function(fmt, startPos)
@@ -199,8 +206,17 @@ Native.renderFmt = function(fmt, startPos)
     // the inverse color underneath with a character then using <pos>
     // to go back over it doesn't really work either.  I mean, it
     // works, but there isn't a character that will fill in the block.
-    ret = "<mark=" + fmt.bg + "30>"
-    ret = ret + "<color=" + fmt.fg + ">"
+
+    // Note: Setting '<font="LiberationSans SDF">' allows the text to be
+    // drawn on top of the background.  It's not monospace, though.
+    // <mspace> can override the character spacing to be monospace.
+
+    ret = ""
+    if startPos <= 0 then
+        ret = "<font=""LiberationSans SDF""><mspace=10>"
+    end if
+
+    ret = ret + "<mark=" + fmt.bg + "><color=" + fmt.fg + ">"
     tail = "</color></mark>"
     if fmt.b then
         ret = ret + "<b>"
@@ -215,6 +231,10 @@ Native.renderFmt = function(fmt, startPos)
 end function
 
 Native.drawCurrentScreen = function(includeLastLine)
+    //for line in self.screenContents
+    //    print("$DISPLAY " + line.replace("<", "$"))
+    //end for
+    //return
     clear_screen
     startRow = 0
     if self.cursorRow > 0 then
@@ -233,12 +253,14 @@ Native.drawCurrentScreen = function(includeLastLine)
     end if
     lastRow = self.screenContents.len - 1
     if not includeLastLine then lastRow = lastRow - 1
-
+    
     if startRow <= lastRow then
         for idx in range(startRow, lastRow)
             print(self.screenContents[idx])
         end for
     end if
+    // Simulate the slow scrolling of old computers.
+    wait(2)
 end function
 
 // SetTerminatingChars Set a list of characters that terminate input.
