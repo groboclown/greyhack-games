@@ -56,17 +56,81 @@ OpV1_Call = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.call_v1 = @OpV1_Call
 
+// OpV1_GetChild
+//      get_child parent_object -> result (branch label)
+// Get the first child of the parent object and, if it exists, branch.
+OpV1_GetChild = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'get_child': requires 1 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'get_child': requires storesVarRef")
+    if branch == null then exit("Invalid opcode 'get_child': requires branch label")
+    object1 = machine.GetObjectData(operands[0].c)
+    childId = machine.GetObjectChild(object1)
+    if childId == null then childId = 0  // the null object.
+    machine.SetVariableRef(storesVarRef, childId)
+    machine.PerformBranch(branch, childId != 0)
+end function
+Opcodes.get_child_v1 = @OpV1_GetChild
+
+// OpV1_GetParent
+//      get_parent child_object -> result
+// Get the parent of the child object.  Does not branch.
+OpV1_GetParent = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'get_parent': requires 1 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'get_parent': requires storesVarRef")
+    object1 = machine.GetObjectData(operands[0].c)
+    parentId = machine.GetObjectParent(object1)
+    if parentId == null then parentId = 0  // the null object.
+    machine.SetVariableRef(storesVarRef, parentId)
+end function
+Opcodes.get_parent_v1 = @OpV1_GetParent
+
+// OpV1_GetProperty
+//      get_prop object property -> (result)
+// Read property from object (resulting in the default value if it had
+// no such declared property).
+OpV1_GetProperty = function(machine, operands, storesVarRef, branch)
+    if operands.len != 2 then exit("Invalid opcode 'get_prop': requires 2 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'get_prop': requires storesVarRef")
+    object1 = machine.GetObjectData(operands[0].c)
+    prop = machine.GetObjectProperty(object1, operands[1].c)
+    value = machine.GetObjectPropertyWord(prop, operands[1].c)
+    if value == null then exit("Encountered")
+    machine.SetVariableRef(storesVarRef, value)
+end function
+Opcodes.get_prop_v1 = @OpV1_GetProperty
+
+// OpV1_GetSibling
+//      get_sibling object -> result (branch label)
+// Get the next sibling of the object and, if it exists, branch.
+OpV1_GetSibling = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'get_sibling': requires 1 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'get_sibling': requires storesVarRef")
+    if branch == null then exit("Invalid opcode 'get_sibling': requires branch label")
+    object1 = machine.GetObjectData(operands[0].c)
+    siblingId = machine.GetObjectSibling(object1)
+    if siblingId == null then siblingId = 0  // the null object.
+    machine.SetVariableRef(storesVarRef, siblingId)
+    machine.PerformBranch(branch, siblingId != 0)
+end function
+Opcodes.get_child_v1 = @OpV1_GetSibling
+
 // OpV1_IncCheck
 //     inc_chk (variable) value (label)
 // Increment variable, and branch if now greater than value.
 OpV1_IncCheck = function(machine, operands, storesVarRef, branch)
     if operands.len != 2 then exit("Invalid opcode 'inc_chk': requires 2 arguments")
-    varRef = operands[0].c
-    test = operands[1].c
-    val = machine.GetVariableRef(varRef)
-    val = val + 1
-    machine.SetVariableRef(varRef, val)
-    machine.PerformBranch(branch, val > test)
+    if branch == null then exit("Invalid opcode 'inc_chk': requires branch label")
+
+    // The first argument is the variable index; it points to the variable to increment.
+    varIndex = operands[0].c
+    varVal = machine.Signed16(machine.GetVariableRef(varIndex))
+    test = machine.Signed16(operands[1].c)
+
+    // Unsign16 will perform proper overflow checking.
+    varVal = varVal + 1
+    machine.SetVariableRef(varIndex, machine.Unsign16(varVal))
+
+    machine.PerformBranch(branch, varVal > test)
 end function
 Opcodes.inc_chk_v1 = @OpV1_IncCheck
 
@@ -135,7 +199,7 @@ Opcodes.insert_obj_v1 = @OpV1_InsertObject
 // (Thus @je a never jumps and @je a b jumps if a = b.)
 // je with just 1 operand is not permitted.
 OpV1_JumpEqual = function(machine, operands, storesVarRef, branch)
-    if operands.len < 1 then exit("Invalid opcode 'je': requires 1 argument (routine)")
+    if operands.len < 1 then exit("Invalid opcode 'je': requires at least 1 argument")
     if branch == null then exit("Invalid opcode 'je': requires branch label")
 
     test = operands[0].c
@@ -167,11 +231,24 @@ OpV1_Jump = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.jump_v1 = @OpV1_Jump
 
+// OpV1_JumpIn
+//     jin obj1 obj2 (label)
+// Jump if parent(obj1) == obj2
+OpV1_JumpIn = function(machine, operands, storesVarRef, branch)
+    if operands.len != 2 then exit("Invalid opcode 'jin': requires 2 arguments")
+    if branch == null then exit("Invalid opcode 'jin': requires branch label")
+    object1 = machine.GetObjectData(operands[0].c)
+    object2Id = operands[1].c
+    machine.PerformBranch(branch, machine.GetObjectParent(object1) == object2Id)
+end function
+Opcodes.jin_v1 = @OpV1_JumpIn
+
 // OpV1_JumpZero
 //     jz a (label)
 // Jump to the label if a == zero.
 OpV1_JumpZero = function(machine, operands, storesVarRef, branch)
     if operands.len != 1 then exit("Invalid opcode 'jz': requires 1 argument")
+    if branch == null then exit("Invalid opcode 'jz': requires branch label")
     machine.PerformBranch(branch, operands[0].c == 0)
 end function
 Opcodes.jz_v1 = @OpV1_JumpZero
@@ -183,13 +260,13 @@ Opcodes.jz_v1 = @OpV1_JumpZero
 OpV1_LoadB = function(machine, operands, storesVarRef, branch)
     if operands.len != 2 then exit("Invalid opcode 'loadb': requires 2 arguments")
     if storesVarRef == null then exit("Invalid opcode 'loadb': requires storesVarRef")
-    OpCodeLogger.Trace("Calling loadb")
+    // OpCodeLogger.Trace("Calling loadb")
     arrayAddress = operands[0].c
-    OpCodeLogger.Trace(" - array address " + arrayAddress)
+    // OpCodeLogger.Trace(" - array address " + arrayAddress)
     offset = operands[1].c
-    OpCodeLogger.Trace(" - offset " + offset)
+    // OpCodeLogger.Trace(" - offset " + offset)
     value = machine.ReadByte(arrayAddress + offset)
-    OpCodeLogger.Trace(" - value " + value)
+    // OpCodeLogger.Trace(" - value " + value)
     machine.SetVariableRef(storesVarRef, value)
 end function
 Opcodes.loadb_v1 = @OpV1_LoadB
@@ -201,13 +278,13 @@ Opcodes.loadb_v1 = @OpV1_LoadB
 OpV1_LoadW = function(machine, operands, storesVarRef, branch)
     if operands.len != 2 then exit("Invalid opcode 'loadw': requires 2 arguments")
     if storesVarRef == null then exit("Invalid opcode 'loadw': requires storesVarRef")
-    OpCodeLogger.Trace("Calling loadw")
+    // OpCodeLogger.Trace("Calling loadw")
     arrayAddress = operands[0].c
-    OpCodeLogger.Trace(" - array address " + arrayAddress)
+    // OpCodeLogger.Trace(" - array address " + arrayAddress)
     offset = 2 * operands[1].c
-    OpCodeLogger.Trace(" - offset " + offset)
+    // OpCodeLogger.Trace(" - offset " + offset)
     value = machine.ReadWord(arrayAddress + offset)
-    OpCodeLogger.Trace(" - value " + value)
+    // OpCodeLogger.Trace(" - value " + value)
     machine.SetVariableRef(storesVarRef, value)
 end function
 Opcodes.loadw_v1 = @OpV1_LoadW
@@ -217,6 +294,7 @@ Opcodes.loadw_v1 = @OpV1_LoadW
 // Print carriage return.
 OpV1_NewLine = function(machine, operands, storesVarRef, branch)
     machine.PrintZscii(char(13))  // zscii newline
+    OpCodeLogger.Warn("Printing newline")
 end function
 Opcodes.new_line_v1 = @OpV1_NewLine
 
@@ -239,7 +317,7 @@ Opcodes.or_v1 = @OpV1_Or
 // Print the quoted (literal) Z-encoded string.
 OpV1_Print = function(machine, operands, storesVarRef, branch)
     text = machine.AdvanceToInstructionAfterString()
-    OpCodeLogger.Debug("Printing '" + text + "'")
+    OpCodeLogger.Warn("Printing trailing text '" + text + "'")
     machine.PrintZscii(text)
 end function
 Opcodes.print_v1 = @OpV1_Print
@@ -252,7 +330,7 @@ Opcodes.print_v1 = @OpV1_Print
 OpV1_PrintChar = function(machine, operands, storesVarRef, branch)
     if operands.len != 1 then exit("Invalid opcode 'print_char': requires 1 argument")
     v1 = char(operands[0].c)
-    OpCodeLogger.Debug("Printing '" + v1 + "'")
+    OpCodeLogger.Warn("Printing char " + operands[0].c + " as '" + v1 + "'")
     machine.PrintZscii(v1)
 end function
 Opcodes.print_char_v1 = @OpV1_PrintChar
@@ -263,11 +341,24 @@ Opcodes.print_char_v1 = @OpV1_PrintChar
 OpV1_PrintNum = function(machine, operands, storesVarRef, branch)
     if operands.len != 1 then exit("Invalid opcode 'print_num': requires 1 argument")
     v1 = machine.Signed16(operands[0].c)
-    OpCodeLogger.Debug("Printing '" + v1 + "'")
+    OpCodeLogger.Warn("Printing number " + operands[0].c + " as '" + v1 + "'")
     // assume zscii digits are 1-to-1 with unicode (they are)
     machine.PrintZscii(str(v1))
 end function
 Opcodes.print_num_v1 = @OpV1_PrintNum
+
+// OpV1_PrintObject
+//     print_obj object
+// Print the object short name
+OpV1_PrintObject = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'print_obj': requires 1 argument")
+    objectId = operands[0].c
+    object = machine.GetObjectData(objectId)
+    name = machine.GetObjectName(object)
+    OpCodeLogger.Warn("Printing object " + objectId + ": '" + name + "'")
+    machine.PrintZscii(name)
+end function
+Opcodes.print_obj_v1 = @OpV1_PrintObject
 
 // OpV1_PrintPAddr
 //     print packed-address
@@ -277,7 +368,7 @@ OpV1_PrintPAddr = function(machine, operands, storesVarRef, branch)
     address = machine.FromStringPackAddress(operands[0].c)
     OpCodeLogger.Trace("Printing @" + address)
     text = machine.ReadString(address)
-    OpCodeLogger.Debug("Printing '" + text + "'")
+    OpCodeLogger.Warn("Printing '" + text + "'")
     machine.PrintZscii(text)
 end function
 Opcodes.print_paddr_v1 = @OpV1_PrintPAddr
@@ -299,11 +390,25 @@ OpV1_Rtrue = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.rtrue_v1 = @OpV1_Rtrue
 
+// template
+//      set_attr object attribute
+// Make object have the attribute numbered attribute.
+OpV1_SetAttribute = function(machine, operands, storesVarRef, branch)
+    if operands.len != 2 then exit("Invalid opcode 'set_attr': requires 2 arguments")
+    objectId = operands[0].c
+    attribute = operands[1].c
+
+    object = machine.GetObjectData(objectId)
+    machine.SetObjectFlag(object, attribute, true)
+end function
+Opcodes.set_attr_v1 = @OpV1_SetAttribute
+
+
 // OpV1_Store Store variable value value
 //     store (variable) value
 // Set the VARiable referenced by the operand to value.
 OpV1_Store = function(machine, operands, storesVarRef, branch)
-    if operands.len != 2 then exit("Invalid opcode 'test': requires 1 argument (routine)")
+    if operands.len != 2 then exit("Invalid opcode 'store': requires 2 arguments")
     variableRef = operands[0].c
     value = operands[1].c
     machine.SetVariableRef(variableRef, value)
@@ -315,16 +420,16 @@ Opcodes.store_v1 = @OpV1_Store
 // Stores the value at memory address array+(2*word-index)
 OpV1_StoreW = function(machine, operands, storesVarRef, branch)
     if operands.len != 3 then exit("Invalid opcode 'storew': requires 3 arguments")
-    OpCodeLogger.Trace("Calling storew")
+    // OpCodeLogger.Trace("Calling storew")
     arrayAddress = operands[0].c
-    OpCodeLogger.Trace(" - array address " + arrayAddress)
+    // OpCodeLogger.Trace(" - array address " + arrayAddress)
     offset = 2 * operands[1].c
-    OpCodeLogger.Trace(" - offset " + offset)
+    // OpCodeLogger.Trace(" - offset " + offset)
     value = operands[2].c
-    OpCodeLogger.Trace(" - value " + value)
+    // OpCodeLogger.Trace(" - value " + value)
     address = arrayAddress + offset
-    OpCodeLogger.Trace(" - array index address " + address)
-    OpCodeLogger.Trace("Setting memory @" + address + " = " + value)
+    // OpCodeLogger.Trace(" - array index address " + address)
+    // OpCodeLogger.Trace("Setting memory @" + address + " = " + value)
     machine.SetWord(address, value)
 
     // Double check our logic.
@@ -356,9 +461,20 @@ OpV1_Test = function(machine, operands, storesVarRef, branch)
     bitmap = operands[0].c
     flags = operands[1].c
 
-    if bitAnd(bitmap, flags) == flags then
-        machine.PerformBranch(branch)
-    end if
-    // Else just keep going.
+    machine.PerformBranch(branch, bitAnd(bitmap, flags) == flags)
 end function
 Opcodes.test_v1 = @OpV1_Test
+
+// OpV1_TestAttr Jump if bitmap values are set.
+//     test_attr object attribute (branch to label)
+// Jump if object has attribute.
+OpV1_TestAttr = function(machine, operands, storesVarRef, branch)
+    if operands.len != 2 then exit("Invalid opcode 'test_attr': requires 2 arguments")
+    if branch == null then exit("Invalid opcode 'test_attr': requires branch label")
+    objectId = operands[0].c
+    attribute = operands[1].c
+
+    object = machine.GetObjectData(objectId)
+    machine.PerformBranch(branch, machine.IsObjectFlagSet(object, attribute))
+end function
+Opcodes.test_attr_v1 = @OpV1_TestAttr

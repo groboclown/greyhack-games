@@ -59,7 +59,7 @@ Interpreter.HandleInstruction = function(instruction)
     //     "r": return value
     //     "a": jump-to address
     runner = @Opcodes[mnemonic]
-    self.log.Trace("Running mnemonic " + mnemonic)
+    // self.log.Trace("Running mnemonic " + mnemonic)
     res = runner(self.machine, instruction[1], instruction[3], instruction[4])
     if res == null then return true
     return res

@@ -36,7 +36,7 @@ Logger.Debug = function(msg)
 end function
 
 Logger.Verbose = function(msg)
-    self.Log(Logger.Verbose, msg)
+    self.Log(Logger.VERBOSE, msg)
 end function
 
 Logger.Info = function(msg)
