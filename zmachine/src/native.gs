@@ -50,6 +50,9 @@ Native.New = function(width, height)
     ret.zsciiSpecialUnicode = {}
     ret.unicodeFromZscii = {}
 
+    // Base font size.
+    ret.fontWidth = 10
+
     return ret
 end function
 
@@ -168,8 +171,9 @@ end function
 //   * 'i' - italic; if not included, defaults to false.  Must be either false or true.
 //   * 'ft' - font index.  Currently ignored.
 // Inverse color is implicit by swapping bg/fg.
-Native.DrawScreen = function(formatLines, drawLastLine)
+Native.DrawScreen = function(formatLines)
     self.screenContents = []
+    if formatLines.len != self.ScreenHeight then exit("wrong screen size: " + formatLines.len + ", requires " + self.ScreenHeight)
 
     for idx in formatLines.indexes
         fmtParts = formatLines[idx]
@@ -203,21 +207,20 @@ Native.DrawScreen = function(formatLines, drawLastLine)
                 end if
             end for
         end for
-        if drawLastLine or idx != self.cursorRow then
-            // Explicitly add a final non-whitespace character to ensure the full
-            // background color is placed.  The cursor line shouldn't have this.
-            while last.t.len < self.ScreenWidth
-                last.t = last.t + " "
-            end while
-            line = line + self.renderFmt(last, lineCols)
-            line = line + "<color=" + last.bg + ">" + char(183)
-        end if
+
+        // Explicitly add a final non-whitespace character to ensure the full
+        // background color is placed.  The cursor line shouldn't have this.
+        while last.t.len < self.ScreenWidth
+            last.t = last.t + " "
+        end while
+        line = line + self.renderFmt(last, lineCols)
+        line = line + "<color=" + last.bg + ">" + char(183)
 
         self.screenContents.push(line)
     end for
 
     // DEBUGGING MODE comment out this line.
-    if DISPLAY_DEBUGGING < 3 then self.drawCurrentScreen(drawLastLine)
+    if DISPLAY_DEBUGGING < 3 then self.drawCurrentScreen()
     // Simulate the slow scrolling of old computers.
     // wait(0.02)
 end function
@@ -236,7 +239,7 @@ Native.renderFmt = function(fmt, startPos)
 
     ret = ""
     if startPos <= 0 then
-        ret = "<font=""LiberationSans SDF""><mspace=10>"
+        ret = "<font=""LiberationSans SDF""><mspace=" + self.fontWidth + ">"
     end if
 
     ret = ret + "<mark=" + fmt.bg + "><color=" + fmt.fg + ">"
@@ -253,37 +256,23 @@ Native.renderFmt = function(fmt, startPos)
     return ret + "<noparse>" + fmt.t + "</noparse>" + tail
 end function
 
-Native.drawCurrentScreen = function(includeCursorLine)
-    if DISPLAY_DEBUGGING == 2 then
-        for line in self.screenContents
-            print("$DISPLAY " + line.replace("<", "$"))
-        end for
-        return
-    end if
+Native.drawCurrentScreen = function()
     if DISPLAY_DEBUGGING == 0 then clear_screen
-    startRow = 0
-    if self.cursorRow > 0 then
-        // Draw up to the input row.
-        // Up to but not including the row...
-        for idx in range(0, self.cursorRow - 1)
-            print(self.screenContents[idx])
-        end for
-        if includeCursorLine and self.cursorRow < self.screenContents.len then
-            // The cursor row is earlier than the last line.
-            // So draw the cursor row.  The cursor is done by drawing the line,
-            // then adding in a <pos=count> to set the column.
-            print(self.screenContents[self.cursorRow] + "<pos=" + (self.cursorColumn - 1) + "><mark=" + self.cursorColor + "> </mark>")
+    if DISPLAY_DEBUGGING == 2 then print("===== clear screen =====")
+    for idx in self.screenContents.indexes
+        out = self.screenContents[idx]
+        if self.cursorRow == idx and self.cursorColumn >= 0 then
+            // Then insert the cursor.  The cursor in the game is a sprite.
+            // <sprite index=0 color=#00DD13FF>
+            // It also has a blink style.  Need to figure that out.
+            out = out + "<pos=" + (self.cursorColumn * self.fontWidth) + "><sprite index=0 color=" + self.cursorColor + ">"
         end if
-        startRow = self.cursorRow
-    end if
-    lastRow = self.screenContents.len - 1
-    if not includeCursorLine then lastRow = lastRow - 1
-    
-    if startRow <= lastRow then
-        for idx in range(startRow, lastRow)
-            print(self.screenContents[idx])
-        end for
-    end if
+        if DISPLAY_DEBUGGING == 2 then
+            print("$DISPLAY <noparse>" + out.replace("<", "$"))
+        else
+            print(out)
+        end if
+    end for
 end function
 
 // SetTerminatingChars Set a list of characters that terminate input.
@@ -336,7 +325,7 @@ Native.SetTerminatingChars = function(codes)
     end for
 end function
 
-// ReadLine Read [cr terminated, text] read from the user's input as a single line.
+// ReadLine Read [cr terminated, zscii, text] read from the user's input as a single line.
 //
 // If the user pressed a carrage return at the end of the input, then the first item
 // in the array is true, otherwise it's false.  The second element is
@@ -352,72 +341,97 @@ end function
 // caller this must ensure that's done.
 Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
     // Should do a "inputStream" test.  But we don't.
+    if DISPLAY_DEBUGGING == 2 then print("$ReadLine(" + maxChars + ", " + cursorColumn +", " + cursorRow + ")")
+
+    display = [] + self.screenContents
 
     // The cursor may be at any legal screen position.  If not
     // legal, then this interpreter arbitrarily puts it in the bottom left side.
-    if cursorRow <= 0 or cursorRow >= self.ScreenHeight then
-        cursorRow = self.ScreenHeight - 1
+    if cursorRow <= 0 or cursorRow >= display.len then
+        cursorRow = display.len - 1
     end if
     if cursorColumn <= 0 or cursorColumn >= self.ScreenWidth then
         cursorColumn = 1
     end if
-    self.SetCursor(cursorColumn, cursorRow)
 
-    // If things look like a simple mode, then just do a simple prompt.
-    if self.cursorRow + 1 >= self.ScreenHeight and self.terminatingChars.len == 1 then
-        // Draw the screen with everything except the last row, then
-        // use the prompt to draw it.
-        self.drawCurrentScreen(false)
-        print("... last line ...")
-        val = user_input(lastLine)
-        ret = []
-        for key in val.values()
-            ret.push(self.convertInputToZscii(key))
-        end for
-        // New line should be done by the caller as part of the scrolling behavior.
-        return [true, ret]
-    end if
+    // Optimizing the character read.  Rather than going through the draw again, do it
+    // with cached versions of the screen.  This needs to be very, very fast.
+    origCursorRow = self.screenContents[cursorRow] + "<pos=" + (cursorColumn * self.fontWidth) + "><color=" + self.inputColor + "><noparse>"
+    cursorFlavor = "</noparse><sprite index=0 color=" + self.cursorColor + "><noparse>"
 
     // Simulate user input handling.
-    ret = []
+    startingCursorColumn = self.cursorColumn
     insertPos = 0
-    baseRowText = self.screenContents[self.ScreenHeight - 1] + "<pos=" + cursorRow + "><color=" + self.inputColor
-    insertText = ""  // what to put at the end of baseRowText before redrawing.
+    insertTextPre = ""
+    insertTextPost = ""
+    this = self  // needed for inner-function access to self
+
+    mkRet = function(isEol)
+        zscii = []
+        text = outer.insertTextPre + outer.insertTextPost
+        for ch in text.values
+            if zscii.len >= maxChars then break
+            zsciiCh = this.convertInputToZscii(ch)
+            if zsciiCh > 0 then zscii.push(zsciiCh)
+        end for
+        return [isEol, zscii, text]
+    end function
 
     // Draw screen will show the cursor for us.
     while true
         // Draw the screen with the simulated cursor.
-        self.screenContents[cursorRow - 1] = baseRowText + insertText
-        self.drawCurrentScreen(true)
-        // Read the character without showing an explicit prompt.
-        ch = user_input("", false, true)
-        if ch == "" then return [true, ret]  // Explicit check for CR
-        if self.terminatingChars.indexOf(ch) != null then return [false, ret]
-        // Not a terminating character.   Handle it.
-        if ch == "LeftArrow" then
-        else if ch =="RightArrow" then
-        else if ch == "Delete" then
-        else if ch == "Backspace" then
+        // Because the cursor isn't flashing at the moment, just stick the whole post text after the cursor.
+        display[cursorRow] = origCursorRow + insertTextPre + cursorFlavor + insertTextPost
+        if DISPLAY_DEBUGGING == 2 then
+            print("===== clear screen for input ====")
+            for row in display
+                print("$DISPLAY " + row.replace("<", "$"))
+            end for
         else
-            zscii = self.convertInputToZscii(ch)
-            if ret.len < maxChars and cursorColumn < self.ScreenWidth then
-                if insertPos != ret.len then
-                    // Overwrite what's there.
-                    ret[insertPos] = zscii
-                    insertText = insertText[:insertPos] + ch + insertText[insertPos + 1:]
-                else
-                    // Append the character.
-                    ret.push(zscii)
-                    insertText = insertText + ch
-                end if
-                // Advance the position.
-                insertPos = insertPos + 1
-                cursorColumn = cursorColumn + 1
-                self.cursorColumn = cursorColumn
-            else
-                // Overwrite the last character and don't advance the position
-                ret[insertPos] = zscii
+            if DISPLAY_DEBUGGING == 0 then clear_screen
+            for row in display
+                print(row)
+            end for
+        end if
+
+        // Read the character without showing an explicit prompt.
+        // Need to put something in the prompt text, or it will return all the
+        // line's text, what's been printed + the typed character.
+        ch = user_input(" ", false, true)
+        if DISPLAY_DEBUGGING == 2 then print("$INPUT '" + ch + "'")
+        if ch == "" then return mkRet(true)  // Explicit check for CR
+        if self.terminatingChars.indexOf(ch) != null then return mkRet(false)
+        // Not a terminating character.   Handle it.
+
+        // Note: The key press handling won't work here with v5 and extra
+        // existing character buffer.  Or does it work right?
+        if ch == "LeftArrow" then
+            if insertTextPre.len > 0 then
+                insertTextPost = insertTextPre[-1] + insertTextPost
+                insertTextPre = insertTextPre[:-1]
             end if
+        else if ch =="RightArrow" then
+            if insertTextPost.len > 0 then
+                insertTextPre = insertTextPre + insertTextPos[0]
+                insertTextPost = insertTextPos[1:]
+            end if
+        else if ch == "Delete" then
+            if insertTextPost.len > 0 then
+                insertTextPost = insertTextPost[1:]
+            end if
+        else if ch == "Backspace" then
+            if insertTextPre.len > 0 then
+                insertTextPre = insertTextPre[:-1]
+            end if
+        else if ch == "End" then
+            insertTextPre = insertTextPre + insertTextPost
+            insertTextPost = ""
+        else if ch == "Home" then
+            insertTextPost = insertTextPre + insertTextPost
+            insertTextPre = ""
+        else if ch.len == 1 then
+            // Needs length checking?
+            insertTextPre = insertTextPre + ch
         end if
     end while
 

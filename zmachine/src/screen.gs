@@ -90,7 +90,7 @@ Screen.Reset = function()
     self.StatusLineTurn = 0
 
     self.StatusBackgroundColor = self.DefaultForegroundColor
-    self.StatusForegroundColor = self.DefaultForegroundColor
+    self.StatusForegroundColor = self.DefaultBackgroundColor
 
     self.Windows = [
         ScreenWindow.New(self.Width, 0, self.DefaultForegroundColor, self.DefaultBackgroundColor, self.ColorSpace24, self.ColorSpace15),
@@ -141,11 +141,16 @@ Screen.Render = function()
         }])
     end if
     for window in self.Windows
-        startY = 0
-        endY = window.StoredLines - window.Height - 1
         if window.ScrollsUp then
+            endY = window.StoredLines - 1
+            startY = endY - window.Height + 1
+            if startY < 0 then startY = 0
+        else
+            startY = 0
             endY = window.Height - 1
-            startY = endY - window.StoredLines + 1
+            if endY >= window.StoredLines then
+                endY = window.StoredLines - 1
+            end if
         end if
         if endY > startY then
             for y in range(startY, endY)
@@ -164,8 +169,10 @@ Screen.SetStatusLine = function(objectName, scoreHour, turnMinute)
     if not self.IsInterpreterStatusLine then
         // Turn on the status line.  Need to adjust the lower window to have
         // a 1-less height, but not adjusting the stored line height.
+        // We hard code the window(1) because the status line is only for
+        // early version games that have limited windowing.
         self.IsInterpreterStatusLine = true
-        self.Windows[1].SetHeight(self.Windows[1] - 1)
+        self.Windows[1].SetHeight(self.Windows[1].Height - 1)
     end if
     self.StatusLineObjectName = objectName
     self.StatusLineScore = scoreHour
@@ -176,9 +183,21 @@ end function
 Screen.GetActiveCursor = function()
     // Need to adjust the Y to accomodate other windows above it.
     height = 0
+    if self.IsInterpreterStatusLine then height = 1
     for idx in range(0, self.Windows.len - 1)
         window = self.Windows[idx]
-        if self.ActiveWindowIndex == idx then return [window.CursorX, window.CursorY + height]
+        if self.ActiveWindowIndex == idx then
+            // Active window may not have a cursor, which is fine.
+            if window.CursorY < 0 then return [-1, -1]
+            // CursorY is position in the full height.  We need it adjusted for the screen.
+            // This depends on whether the window is scrolling or not.
+            if window.ScrollsUp then
+                // WHY IS THIS + 2 NEEDED????
+                return [window.CursorX, height + window.CursorY - (window.StoredLines - window.Height) + 2]
+            else
+                return [window.CursorX, height + window.CursorY]
+            end if
+        end if
         height = height + window.Height
     end for
     // no active window?
@@ -188,6 +207,10 @@ end function
 // PrintZscii Send text to the active window.
 Screen.PrintZscii = function(text)
     self.Windows[self.ActiveWindowIndex].PrintZscii(text)
+end function
+
+Screen.AddUserInput = function(originalText, includeNewline)
+    self.Windows[self.ActiveWindowIndex].AddUserInput(originalText, includeNewline)
 end function
 
 // SetColorspace24 Set the colorspace index.
@@ -270,29 +293,48 @@ ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, col
     return ret
 end function
 
-ScreenWindow__EOL = char(13)
+// AddUserInput Add input read by the native code into the screen.
+ScreenWindow.AddUserInput = function(originalText, includeNewline)
+    // At this point in the processing, the story has written the prompt, and
+    // the native code has read in the input.  The screen needs to insert the text
+    // and possibly scroll.
+
+    // TODO should convert the original text to zscii characters, specifically around unicdoe.
+
+    if includeNewline then
+        originalText = originalText + ScreenWindow__EOL1
+    end if
+    // TODO Look at not hard-coding input text color.
+    self.printFormattedZscii(originalText, "#c0c0c0", self.BackgroundColor24, false, false)
+end function
+
+ScreenWindow__EOL1 = char(13)
 ScreenWindow__TAB = char(9)
-ScreenWindow__WhiteSpace = " " + ScreenWindow__TAB + ScreenWindow__EOL
 
 // PrintZscii Print the zscii string to the window.
 ScreenWindow.PrintZscii = function(text)
-    // Append to the current line.  Optionally word wrap (if buffer mode is on).
-
-    // Early check to prevent more complex behavior.
-    if self.Height <= 0 then return
-    if self.checkY() then return  // out of bounds before we start.
-
     fg = self.ForegroundColor24
     bg = self.BackgroundColor24
     if self.ReverseColor then
         fg = bg
         bg = self.ForegroundColor24
     end if
+    self.printFormattedZscii(text, fg, bg, self.Bold, self.Italic)
+end function
+
+// printFormattedZscii Send some zscii text with formatting into the window.
+ScreenWindow.printFormattedZscii = function(text, fg, bg, bold, italic)
+    // Append to the current line.  Optionally word wrap (if buffer mode is on).
+
+    // Early check to prevent more complex behavior.
+    if self.Height <= 0 then return
+    if self.checkY() then return  // out of bounds before we start.
+
     buff = ""
     nextX = self.CursorX
     for ch in text.values()
         drawChar = true
-        if ch == ScreenWindow__EOL then
+        if ch == ScreenWindow__EOL1 then
             drawChar = false  // handle EOL implicitly.
             if buff.len > 0 then
                 // There has already been stuff put into the buffer, and the cursor was fine then.
@@ -301,8 +343,8 @@ ScreenWindow.PrintZscii = function(text)
                     "t": buff,
                     "fg": fg,
                     "bg": bg,
-                    "b": self.Bold,
-                    "i": self.Italic,
+                    "b": bold,
+                    "i": italic,
                 })
                 buff = ""
             end if
@@ -322,20 +364,21 @@ ScreenWindow.PrintZscii = function(text)
                         "t": buff,
                         "fg": fg,
                         "bg": bg,
-                        "b": self.Bold,
-                        "i": self.Italic,
+                        "b": bold,
+                        "i": italic,
                     })
                     buff = ""
                 end if
             else
                 // word-wrap enabled
-                if ScreenWindow__WhiteSpace.indexOf(ch) == null then
+                // At this point, white space is either space or tab.
+                if ch != " " and ch != ScreenWindow__TAB then
                     // Need to word wrap on this non-whitespace character.
                     // Only wrap within the last format group.  The buffer is
                     // already under the width of the line, because it's been built
                     // up character by character.
                     pos = buff.len - 1
-                    while pos >= 0 and ScreenWindow__WhiteSpace.indexOf(buff[pos]) == null
+                    while pos >= 0 and buff[pos] != " " and buff[pos] != ScreenWindow__TAB
                         pos = pos - 1
                     end while
                     if pos < 0 then
@@ -367,8 +410,8 @@ ScreenWindow.PrintZscii = function(text)
                 "t": prevLine,
                 "fg": fg,
                 "bg": bg,
-                "b": self.Bold,
-                "i": self.Italic,
+                "b": bold,
+                "i": italic,
             })
 
             // Handle cursor wrapping
@@ -398,8 +441,8 @@ ScreenWindow.PrintZscii = function(text)
             "t": buff,
             "fg": fg,
             "bg": bg,
-            "b": self.Bold,
-            "i": self.Italic,
+            "b": bold,
+            "i": italic,
         })
     end if
     self.CursorX = nextX
@@ -407,11 +450,11 @@ end function
 
 // Called on moving down a Y.
 ScreenWindow.checkY = function()
-    if self.CursorY >= self.Height then
+    if self.CursorY >= self.StoredLines then
         if not self.ScrollsUp then return true  // can't scroll text up, so exit immediately.
         self.FormattedLines.pull()  // remove the top line
         self.FormattedLines.push([])
-        self.CursorY = self.Height - 1  // keep it on the last line.
+        self.CursorY = self.StoredLines - 1  // keep it on the last line.
         self.CursorX = 0  // move the x cursor to the start of the line.
     end if
     return false
@@ -448,6 +491,7 @@ ScreenWindow.SetHeight = function(lineCount)
         self.StoredLines = lineCount
     end if
     self.Height = lineCount
+    if self.CursorY >= lineCount then self.CursorY = lineCount - 1
 end function
 
 // SetScreenColorIndex Set the color index.

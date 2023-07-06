@@ -622,13 +622,21 @@ MachineState.UpdateStatusLine = function()
     score = self.getGlobalVariable(17)  // 0x11, the second global
     turn = self.getGlobalVariable(18)  // 0x11, the third global
     self.screen.SetStatusLine(statusObjectName, score, turn)
+    if self.Stream1Active then
+        self.native.DrawScreen(self.screen.Render())
+        cursor = self.screen.GetActiveCursor()
+        self.native.SetCursor(cursor[0], cursor[1])
+    end if
 end function
 
 // ReadInputLine Read user input
+//
+// Returns [was CR terminated?, zscii text, raw user input text]
 MachineState.ReadInputLine = function(maxCharCount)
     cursor = self.screen.GetActiveCursor()
     userInput = self.native.ReadLine(maxCharCount, cursor[0], cursor[1])
     // TODO send this to output stream 4.
+    self.screen.AddUserInput(userInput[2], userInput[0])
     return userInput
 end function
 
@@ -652,7 +660,7 @@ MachineState.PrintZscii = function(text)
     // Stream 1 == screen
     if self.Stream1Active then
         self.screen.PrintZscii(text)
-        self.native.DrawScreen(self.screen.Render(), true)
+        self.native.DrawScreen(self.screen.Render())
         cursor = self.screen.GetActiveCursor()
         self.native.SetCursor(cursor[0], cursor[1])
     end if
