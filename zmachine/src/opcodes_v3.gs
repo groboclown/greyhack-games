@@ -64,7 +64,9 @@ OpV1_GetChild = function(machine, operands, storesVarRef, branch)
     if storesVarRef == null then exit("Invalid opcode 'get_child': requires storesVarRef")
     if branch == null then exit("Invalid opcode 'get_child': requires branch label")
     object1 = machine.GetObjectData(operands[0].c)
+    OpCodeLogger.Debug("Getting child of " + operands[0].c + " " + object1)
     childId = machine.GetObjectId(machine.GetObjectChild(object1))
+    OpCodeLogger.Debug("Found child id " + childId + "; setting to " + storesVarRef)
     machine.SetVariableRef(storesVarRef, childId)
     machine.PerformBranch(branch, childId != 0)
 end function
@@ -91,6 +93,7 @@ OpV1_GetProperty = function(machine, operands, storesVarRef, branch)
     if operands.len != 2 then exit("Invalid opcode 'get_prop': requires 2 arguments")
     if storesVarRef == null then exit("Invalid opcode 'get_prop': requires storesVarRef")
     object1 = machine.GetObjectData(operands[0].c)
+    OpCodeLogger.Debug("Getting property " + operands[1].c + " from object " + operands[0].c)
     value = machine.GetObjectPropertyWord(object1, operands[1].c)
     if value == null then exit("Encountered null property and no default value")
     machine.SetVariableRef(storesVarRef, value)
@@ -110,7 +113,23 @@ OpV1_GetSibling = function(machine, operands, storesVarRef, branch)
     machine.SetVariableRef(storesVarRef, siblingId)
     machine.PerformBranch(branch, siblingId != 0)
 end function
-Opcodes.get_child_v1 = @OpV1_GetSibling
+Opcodes.get_sibling_v1 = @OpV1_GetSibling
+
+// OpV1_Inc
+//     inc (variable)
+// Increment variable (signed increment)
+OpV1_Inc = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'inc': requires 1 argument")
+
+    // The first argument is the variable index; it points to the variable to increment.
+    varIndex = operands[0].c
+    varVal = machine.Signed16(machine.GetVariableRef(varIndex))
+
+    // Unsign16 will perform proper overflow checking.
+    varVal = varVal + 1
+    machine.SetVariableRef(varIndex, machine.Unsign16(varVal))
+end function
+Opcodes.inc_v1 = @OpV1_Inc
 
 // OpV1_IncCheck
 //     inc_chk (variable) value (label)
@@ -268,7 +287,7 @@ OpV1_JumpIn = function(machine, operands, storesVarRef, branch)
     if branch == null then exit("Invalid opcode 'jin': requires branch label")
     object1 = machine.GetObjectData(operands[0].c)
     object2Id = operands[1].c
-    machine.PerformBranch(branch, machine.GetObjectParent(object1) == object2Id)
+    machine.PerformBranch(branch, machine.GetObjectId(machine.GetObjectParent(object1)) == object2Id)
 end function
 Opcodes.jin_v1 = @OpV1_JumpIn
 
@@ -420,15 +439,23 @@ OpV1_RetPopped = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.ret_popped_v1 = @OpV1_RetPopped
 
-// OpV1_Rtrue
+// OpV1_RTrue
 //     rtrue
 // Return true (1) from the current routine.
-OpV1_Rtrue = function(machine, operands, storesVarRef, branch)
+OpV1_RTrue = function(machine, operands, storesVarRef, branch)
     machine.PopStackFrame(1)
 end function
-Opcodes.rtrue_v1 = @OpV1_Rtrue
+Opcodes.rtrue_v1 = @OpV1_RTrue
 
-// template
+// OpV1_RFalse
+//     rfalse
+// Return false (0) from the current routine.
+OpV1_RFalse = function(machine, operands, storesVarRef, branch)
+    machine.PopStackFrame(0)
+end function
+Opcodes.rfalse_v1 = @OpV1_RFalse
+
+// OpV1_SetAttribute
 //      set_attr object attribute
 // Make object have the attribute numbered attribute.
 OpV1_SetAttribute = function(machine, operands, storesVarRef, branch)
@@ -441,6 +468,92 @@ OpV1_SetAttribute = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.set_attr_v1 = @OpV1_SetAttribute
 
+// OpV1_SRead
+//      sread text parse
+// The whopper.  Read in text from the current input stream until a terminating
+// character.  Does not show a prompt.
+OpV1_SRead = function(machine, operands, storesVarRef, branch)
+    if operands.len < 1 or operands.len > 2 then exit("Invalid opcode 'sread': requires 1 or 2 arguments")
+    if machine.FileVersion <= 3 then
+        machine.UpdateStatusLine()
+    end if
+
+    // text - pointer to the text buffer
+    text = operands[0].c
+    // n Versions 1 to 4, byte 0 of the text-buffer should initially contain the maximum number of
+    // letters which can be typed, minus 1 (the interpreter should not accept more than this).
+    maxInputChars = machine.ReadByte(text)
+    if maxInputChars < 3 then exit("Invalid story file: text buffer size < 3")
+
+    textCountPos = 0
+    textStartPos = 1
+    textInsertPos = 1
+    if machine.FileVersion >= 5 then
+        // If byte 1 contains a positive value at the start of the input, then read assumes that
+        // number of characters are left over from an interrupted previous input, and writes the new characters
+        // after those already there. Note that the interpreter does not redisplay the characters left over:
+        // the game does this, if it wants to.        
+        // The interpreter stores the number of characters actually typed in byte 1 (not counting
+        // the terminating character), and the characters themselves (reduced to lower case) in bytes
+        // 2 onward (not storing the terminating character).
+        leftoverChars = machine.ReadByte(text + 1)
+        textCountPos = 1
+        startPos = 2
+        textInsertPos = 2 + leftoverChars
+
+        // Note: these leftover chars should be put into the output stream 4.
+    end if
+
+    // Read the text
+    userInput = machine.ReadInputLine(maxInputChars)
+    if userInput[0] then
+        // User pressed CR, so send that to the screen.
+        machine.PrintZscii(char(13))  // zscii newline
+    end if
+
+    // Update the text buffer
+
+    // Set the number of characters read in - byte 0.
+    input = userInput[1]
+    if machine.FileVersion <= 4 then
+        // add a zero terminator.
+        input.push(0)
+    end if
+    if input.len > maxInputChars then input = input[:maxInputChars]
+    machine.SetByte(text + textCountPos, input.len)
+    for idx in input.indexes
+        machine.SetByte(text + textInsertPos + idx, input[idx])
+    end for
+
+    // parse - pointer to the parse buffer
+    parse = 0
+    if operands.len > 1 then parse = operands[1].c
+
+    if parse != 0 then
+        // Perform lexical analysis.
+        maxWordCount = machine.ReadByte(parse)
+        if maxWordCount <= 1 then exit("Invalid story file: text parser size <= 1")  // min 6 bytes
+        // (If this is n, the buffer must be at least 2 + 4*n bytes long to hold the results of the analysis.)
+
+        // The interpreter divides the text into words and looks them up in the dictionary, as described in S13.
+        // The number of words is written in byte 1 and one 4-byte block is written for each word,
+        // from byte 2 onwards (except that it should stop before going beyond the maximum number of words specified).
+        // Each block consists of the byte address of the word in the dictionary, if it is in the dictionary, or 0 if
+        // it isn’t; followed by a byte giving the number of letters in the word; and finally a byte giving the
+        // position in the text-buffer of the first letter of the word.
+
+        // In Version 5 and later, this is a store instruction: the return value is the terminating character
+        // (note that the user pressing his “enter” key may cause either 10 or 13 to be returned; the interpreter
+        // must return 13). A timed-out input returns 0.
+        // (Versions 1 and 2 and early Version 3 games mistakenly write the parse buffer length 240 into byte 0
+        // of the parse buffer: later games fix this bug and write 59, because 2+4*59 = 238 so that 59 is the
+        // maximum number of textual words which can be parsed into a buffer of length 240 bytes. Old versions
+        // of the Inform 5 library commit the same error. Neither mistake has very serious consequences.)
+        exit("<color=#ff0000>Need to implement parsing")
+    end if
+
+end function
+Opcodes.sread_v1 = @OpV1_SRead
 
 // OpV1_Store Store variable value value
 //     store (variable) value

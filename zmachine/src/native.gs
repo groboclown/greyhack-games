@@ -135,6 +135,23 @@ Native.PauseForScroll = function()
     user_input("[MORE]")
 end function
 
+// SetCursor set the column, row for the cursor position on the screen.
+//
+// Values are 0 based.  Set the values to null to remove the column.
+Native.SetCursor = function(col, row)
+    if row == null or col == null then
+        self.cursorRow = -1
+        self.cursorColumn = -1
+    else
+        if row >= self.ScreenWidth then row = self.ScreenWidth - 1
+        if row < 0 then row = 0
+        if col >= self.ScreenHeight then col = self.ScreenHeight - 1
+        if col < 0 then col = 0
+        self.cursorRow = row
+        self.cursorColumn = col
+    end if
+end function
+
 // DrawScreen Draw the entire screen.
 //
 // The native code doesn't allow for partial updates, only full drawing.
@@ -154,7 +171,8 @@ end function
 Native.DrawScreen = function(formatLines, drawLastLine)
     self.screenContents = []
 
-    for fmtParts in formatLines
+    for idx in formatLines.indexes
+        fmtParts = formatLines[idx]
         // The values are reset on each new line.
         line = ""
         lineCols = 0
@@ -185,18 +203,23 @@ Native.DrawScreen = function(formatLines, drawLastLine)
                 end if
             end for
         end for
-        // Explicitly add a final non-whitespace character to ensure the full
-        // background color is placed.
-        while last.t.len < self.ScreenWidth
-            last.t = last.t + " "
-        end while
+        if drawLastLine or idx != self.cursorRow then
+            // Explicitly add a final non-whitespace character to ensure the full
+            // background color is placed.  The cursor line shouldn't have this.
+            while last.t.len < self.ScreenWidth
+                last.t = last.t + " "
+            end while
+            line = line + self.renderFmt(last, lineCols)
+            line = line + "<color=" + last.bg + ">" + char(183)
+        end if
 
-        line = line + self.renderFmt(last, lineCols)
-        line = line + "<color=" + last.bg + ">" + char(183)
         self.screenContents.push(line)
     end for
 
-    self.drawCurrentScreen(drawLastLine)
+    // DEBUGGING MODE comment out this line.
+    if DISPLAY_DEBUGGING < 3 then self.drawCurrentScreen(drawLastLine)
+    // Simulate the slow scrolling of old computers.
+    // wait(0.02)
 end function
 
 Native.renderFmt = function(fmt, startPos)
@@ -230,37 +253,37 @@ Native.renderFmt = function(fmt, startPos)
     return ret + "<noparse>" + fmt.t + "</noparse>" + tail
 end function
 
-Native.drawCurrentScreen = function(includeLastLine)
-    //for line in self.screenContents
-    //    print("$DISPLAY " + line.replace("<", "$"))
-    //end for
-    //return
-    clear_screen
+Native.drawCurrentScreen = function(includeCursorLine)
+    if DISPLAY_DEBUGGING == 2 then
+        for line in self.screenContents
+            print("$DISPLAY " + line.replace("<", "$"))
+        end for
+        return
+    end if
+    if DISPLAY_DEBUGGING == 0 then clear_screen
     startRow = 0
     if self.cursorRow > 0 then
-        // Draw up to the input row...
-        // up to but not including the row...
+        // Draw up to the input row.
+        // Up to but not including the row...
         for idx in range(0, self.cursorRow - 1)
             print(self.screenContents[idx])
         end for
-        if includeLastLine and self.cursorRow < self.screenContents.len then
+        if includeCursorLine and self.cursorRow < self.screenContents.len then
             // The cursor row is earlier than the last line.
             // So draw the cursor row.  The cursor is done by drawing the line,
             // then adding in a <pos=count> to set the column.
-            print(self.screenContents[self.cursorRow - 1] + "<pos=" + (self.cursorColumn - 1) + "><mark=" + cursorColor + "> </mark>")
+            print(self.screenContents[self.cursorRow] + "<pos=" + (self.cursorColumn - 1) + "><mark=" + self.cursorColor + "> </mark>")
         end if
         startRow = self.cursorRow
     end if
     lastRow = self.screenContents.len - 1
-    if not includeLastLine then lastRow = lastRow - 1
+    if not includeCursorLine then lastRow = lastRow - 1
     
     if startRow <= lastRow then
         for idx in range(startRow, lastRow)
             print(self.screenContents[idx])
         end for
     end if
-    // Simulate the slow scrolling of old computers.
-    wait(2)
 end function
 
 // SetTerminatingChars Set a list of characters that terminate input.
@@ -313,9 +336,11 @@ Native.SetTerminatingChars = function(codes)
     end for
 end function
 
-// ReadLine Read a whole command from the user's input as a single line.
+// ReadLine Read [cr terminated, text] read from the user's input as a single line.
 //
-// Returned characters are a list of ZSCII bytes.
+// If the user pressed a carrage return at the end of the input, then the first item
+// in the array is true, otherwise it's false.  The second element is
+// a list of lower-case ZSCII bytes.
 //
 // No prompt is automatically displayed.
 //
@@ -325,38 +350,36 @@ end function
 //
 // In Versions 1 to 3, the status line is automatically redisplayed first.  The
 // caller this must ensure that's done.
-Native.ReadLine = function(maxChars, cursorRow, cursorColumn)
+Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
     // Should do a "inputStream" test.  But we don't.
 
     // The cursor may be at any legal screen position.  If not
     // legal, then this interpreter arbitrarily puts it in the bottom left side.
-    if cursorRow <= 0 or cursorRow > self.ScreenHeight then
-        cursorRow = self.ScreenHeight
+    if cursorRow <= 0 or cursorRow >= self.ScreenHeight then
+        cursorRow = self.ScreenHeight - 1
     end if
-    if cursorColumn <= 0 or cursorColumn > self.ScreenWidth then
+    if cursorColumn <= 0 or cursorColumn >= self.ScreenWidth then
         cursorColumn = 1
     end if
+    self.SetCursor(cursorColumn, cursorRow)
 
     // If things look like a simple mode, then just do a simple prompt.
-    if cursorRow == self.ScreenHeight and self.terminatingChars.len == 1 then
+    if self.cursorRow + 1 >= self.ScreenHeight and self.terminatingChars.len == 1 then
         // Draw the screen with everything except the last row, then
         // use the prompt to draw it.
         self.drawCurrentScreen(false)
-        val = user_input(self.screenContents[self.ScreenHeight - 1])
+        print("... last line ...")
+        val = user_input(lastLine)
         ret = []
         for key in val.values()
             ret.push(self.convertInputToZscii(key))
         end for
-        // Perform new-line.
-        self.cursorColumn = 1
-        self.cursorRow = cursorRow
-        return ret
+        // New line should be done by the caller as part of the scrolling behavior.
+        return [true, ret]
     end if
 
     // Simulate user input handling.
     ret = []
-    self.cursorRow = cursorRow
-    self.cursorColumn = cursorColumn
     insertPos = 0
     baseRowText = self.screenContents[self.ScreenHeight - 1] + "<pos=" + cursorRow + "><color=" + self.inputColor
     insertText = ""  // what to put at the end of baseRowText before redrawing.
@@ -368,7 +391,8 @@ Native.ReadLine = function(maxChars, cursorRow, cursorColumn)
         self.drawCurrentScreen(true)
         // Read the character without showing an explicit prompt.
         ch = user_input("", false, true)
-        if self.terminatingChars.indexOf(ch) != null then return ret
+        if ch == "" then return [true, ret]  // Explicit check for CR
+        if self.terminatingChars.indexOf(ch) != null then return [false, ret]
         // Not a terminating character.   Handle it.
         if ch == "LeftArrow" then
         else if ch =="RightArrow" then

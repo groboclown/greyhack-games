@@ -167,7 +167,22 @@ Screen.SetStatusLine = function(objectName, scoreHour, turnMinute)
         self.IsInterpreterStatusLine = true
         self.Windows[1].SetHeight(self.Windows[1] - 1)
     end if
-    StatusLineObjectName
+    self.StatusLineObjectName = objectName
+    self.StatusLineScore = scoreHour
+    self.StatusLineTurn = turnMinute
+end function
+
+// GetActiveCursor Get the cursor [x, y] for the active window
+Screen.GetActiveCursor = function()
+    // Need to adjust the Y to accomodate other windows above it.
+    height = 0
+    for idx in range(0, self.Windows.len - 1)
+        window = self.Windows[idx]
+        if self.ActiveWindowIndex == idx then return [window.CursorX, window.CursorY + height]
+        height = height + window.Height
+    end for
+    // no active window?
+    return height
 end function
 
 // PrintZscii Send text to the active window.

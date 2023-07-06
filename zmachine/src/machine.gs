@@ -609,6 +609,28 @@ MachineState.SetOutputStreamState = function(streamNumber, tableAddress = null)
 end function
 
 // ====================================================================
+// Input and Display Stuff.
+
+// UpdateStatusLine Update the status line, and ensure that it is shown.
+MachineState.UpdateStatusLine = function()
+    // Shows the short name of the object whose number is in the first global variable.
+    statusObjectId = self.getGlobalVariable(16)  // 0x10, the first global
+    statusObject = self.GetObjectData(statusObjectId)
+    statusObjectName = self.GetObjectName(statusObject)
+    if statusObjectName == null then statusObjectName = "(unset)"
+    // score or hour is in the second global variable, turn or minute is in the third.
+    score = self.getGlobalVariable(17)  // 0x11, the second global
+    turn = self.getGlobalVariable(18)  // 0x11, the third global
+    self.screen.SetStatusLine(statusObjectName, score, turn)
+end function
+
+// ReadInputLine Read user input
+MachineState.ReadInputLine = function(maxCharCount)
+    cursor = self.screen.GetActiveCursor()
+    userInput = self.native.ReadLine(maxCharCount, cursor[0], cursor[1])
+    // TODO send this to output stream 4.
+    return userInput
+end function
 
 // PrintZscii Display a string to the output streams.
 //
@@ -630,7 +652,9 @@ MachineState.PrintZscii = function(text)
     // Stream 1 == screen
     if self.Stream1Active then
         self.screen.PrintZscii(text)
-        self.native.DrawScreen(self.screen.Render())
+        self.native.DrawScreen(self.screen.Render(), true)
+        cursor = self.screen.GetActiveCursor()
+        self.native.SetCursor(cursor[0], cursor[1])
     end if
 
     // Stream 2 == transcript
@@ -651,6 +675,7 @@ MachineState.GetObjectPropertyDefault = function(propertyIndex)
     if propertyIndex > 63 or propertyIndex < 0 then return null
 
     address = self.ObjectTableAddress + (propertyIndex * self.WordSize)
+    MachineLogln(" ; prop " + propertyIndex + " default read " + self.ReadWord(address))
     return self.ReadWord(address)
 end function
 
@@ -844,7 +869,7 @@ MachineState.getFirstPropertyAddress = function(objectValues)
     // Property table address
     propAddress = objectValues[4]
     nameLen = self.ReadByte(propAddress)
-    addr = propAddress + (nameLen * 2)
+    addr = propAddress + (nameLen * 2) + 1
     return addr
 end function
 
@@ -913,12 +938,15 @@ end function
 MachineState.GetObjectPropertyWord = function(objectValues, propertyId)
     propertyAddressInfo = self.GetObjectProperty(objectValues, propertyId)
 
+    if propertyAddressInfo == null then self.log.Debug("Getting default property for " + propertyId)
     if propertyAddressInfo == null then return self.GetObjectPropertyDefault(propertyId)
 
     // If the property has length 1, the value is
     // only that byte. If it has length 2, the first two bytes of the property
     // are taken as a word value. It is illegal for the opcode to be used if the
     // property has length greater than 2, and the result is unspecified.
+    self.log.Debug("Getting " + propertyAddressInfo[1] + " byte length value for property " + propertyId)
+    MachineLogln(" ; prop " + propertyId + " @" + propertyAddressInfo[2] + ", " + propertyAddressInfo[1] + " bytes")
     if propertyAddressInfo[1] == 1 then return self.ReadByte(propertyAddressInfo[2])
     if propertyAddressInfo[1] == 2 then return self.ReadWord(propertyAddressInfo[2])
     // Invalid state.

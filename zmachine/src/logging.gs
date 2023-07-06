@@ -54,15 +54,31 @@ end function
 // OpCodeLogger Logger used by opcodes.
 OpCodeLogger = Logger.New("opcodes")
 
+// ====================================================================
+// Deep level debug controls
+//   == 0 - normal
+//   == 1 - don't clear the screen
+//   == 2 - draw the low-level text formatting
+//   == 3 - print only when a print command is sent; looks sloppy.
+DISPLAY_DEBUGGING = 0
+// DISPLAY_DEBUGGING = 3
+
 // Log machine parsing progress.
 // Used to debug the machine parser and opcode handling.
 // A bit of native nonsense has crept into this...
 //get_shell.host_computer.touch(home_dir + "/zmachine-out.txt")
-//MACHINE_PROGRESS = get_shell.host_computer.File(home_dir + "/zmachine-out.txt")
-//MACHINE_PROGRESS.set_content("")
+MACHINE_PROGRESS = get_shell.host_computer.File(home_dir + "/zmachine-out.txt")
+MACHINE_PROGRESS.set_content("")
+//MACHINE_PROGRESS_CONTENT = ""
 MachineLog = function(text)
-    //MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content() + text)
+    //MACHINE_PROGRESS_CONTENT = MACHINE_PROGRESS_CONTENT + str(text)
+    MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content + text)
 end function
 MachineLogln = function(text)
-    //MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content() + text + char(10))
+    //MACHINE_PROGRESS_CONTENT = MACHINE_PROGRESS_CONTENT + str(text)
+    //MACHINE_PROGRESS.set_content(MACHINE_PROGRESS_CONTENT + char(10))
+    MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content + text + char(10))
+
+    //print(MACHINE_PROGRESS_CONTENT)
+    //MACHINE_PROGRESS_CONTENT = ""
 end function
