@@ -556,20 +556,11 @@ MachineState.SetByte = function(physAddress, value)
     self.dynamicMemory[physAddress] = value
 end function
 
-// SetOutputStreamState Set the output stream (1, 2, 3, 4) and optional table (for stream 3).
+// SetOutputStreamState Set the output stream (1, 2, 3, 4) state and optional table (for stream 3).
 //
-// If the stream number is negative, then that stream is disabled.
-// Stream number 0 does nothing.
-MachineState.SetOutputStreamState = function(streamNumber, tableAddress = null)
-    enabled = true
-    if streamNumber > 32767 then  // top bit set on a word
-        enabled = false
-        streamNumber = 65536 - streamNumber
-    else if streamNumber > 127 then  // top bit set on a byte
-        enabled = false
-        streamNumber = 256 - streamNumber
-    end if
-
+// Stream number 0 does nothing.  Only the valid stream numbers
+// will do anything; negative values will not.
+MachineState.SetOutputStreamState = function(streamNumber, enabled, tableAddress = null)
     if streamNumber == 1 then
         self.Stream1Active = enabled == 1
     else if streamNumber == 2 then
@@ -1508,6 +1499,33 @@ MachineState.StartGame = function()
         })
     end if
 end function
+
+// SaveGame Save the game to a file.
+//
+// Returns true if the game successfully saved.
+//
+// The call will handle asking the player for the save game file.
+//
+// If the region is non-null, then the [address, byte count] will be saved.
+//
+// If the suggested name is given and prompt is false, then the machine
+// will create a save that can be later restored with that same name, without
+// asking the player.
+MachineState.SaveGame = function(region = null, suggestedName = null, prompt = null)
+    self.screen.PrintZscii("(save not implemented yet)" + char(13))
+    return false
+end function
+
+// RestoreGame Restore the state of the game.
+//
+// This must follow the semantics of Restore in terms of keeping some
+// header flags the same after a restore.
+MachineState.RestoreGame = function()
+    self.screen.PrintZscii("(restore not implemented yet)" + char(13))
+    return false
+end function
+
+// ====================================================================
 
 // GetStackFrame Get the current stack frame (the index)
 //

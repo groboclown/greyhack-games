@@ -1,4 +1,6 @@
 // Native interactions.
+MIN_FRAME_WAIT = 0.21
+MIN_FRAME_REFRESH_TIME = 0.5
 
 Native = {}
 
@@ -49,6 +51,13 @@ Native.New = function(width, height)
     // Character translation table to zscii
     ret.zsciiSpecialUnicode = {}
     ret.unicodeFromZscii = {}
+
+    // History of past input captures for history scrolling
+    ret.cmdHistory = []
+
+    // Time of the last draw.  Used to ensure waiting between redraw
+    // to reduce flashing.
+    ret.lastDraw = time()
 
     // Base font size.
     ret.fontWidth = 10
@@ -275,10 +284,18 @@ Native.drawCurrentScreen = function()
             lines.push(out)
         end if
     end for
+    currentTime = time()
+    under = MIN_FRAME_REFRESH_TIME - (currentTime - self.lastDraw)
+    clear = DISPLAY_DEBUGGING == 0
+    if under > 0 and clear then
+        // waiting allow the print with clear-screen to properly clear the screen.
+        // wait(MIN_FRAME_WAIT)
+        clear_screen
+        clear = false
+    end if
+    self.lastDraw = time()
     // So much faster to redraw the screen in a single call.
-    // print(lines.join(char(10)), DISPLAY_DEBUGGING == 0)
-    if DISPLAY_DEBUGGING == 0 then clear_screen
-    print(lines.join(char(10)))
+    print(lines.join(char(10)), clear)
 end function
 
 // SetTerminatingChars Set a list of characters that terminate input.
@@ -371,6 +388,8 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
     insertPos = 0
     insertTextPre = ""
     insertTextPost = ""
+    needsDraw = true
+    cmdHistoryPos = self.cmdHistory.len
     this = self  // needed for inner-function access to self
 
     mkRet = function(isEol)
@@ -383,9 +402,88 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
         end for
         return [isEol, zscii, text]
     end function
+    leftArrowKey = function()
+        if outer.insertTextPre.len > 0 then
+            outer.insertTextPost = outer.insertTextPre[-1] + outer.insertTextPost
+            outer.insertTextPre = outer.insertTextPre[:-1]
+            outer.needsDraw = true
+        end if
+    end function
+    rightArrowKey = function()
+        if outer.insertTextPost.len > 0 then
+            outer.insertTextPre = outer.insertTextPre + outer.insertTextPost[0]
+            outer.insertTextPost = outer.insertTextPost[1:]
+            outer.needsDraw = true
+        end if
+    end function
+    upArrowKey = function()
+        if outer.cmdHistoryPos >= 0 and outer.cmdHistoryPos < this.cmdHistory.len then
+            outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
+            outer.insertTextPost = ""
+            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
+            return
+        end if
+        if outer.insertTextPre != "" or outer.insertTextPost != "" then
+            this.cmdHistory.push(outer.insertTextPre + outer.insertTextPost)
+            outer.insertTextPre = ""
+            outer.insertTextPost = ""
+        end if
+    end function
+    downArrowKey = function()
+        if outer.cmdHistoryPos == 0 and this.cmdHistory.len == 0 and outer.insertTextPre != "" or outer.insertTextPost != "" then
+            this.cmdHistory.push(outer.insertTextPre + outer.insertTextPost)
+            outer.insertTextPre = ""
+            outer.insertTextPost = ""
+            return
+        end if
+        if outer.cmdHistoryPos < 0 and this.cmdHistory.len > 0 then
+            outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
+            outer.insertTextPost = ""
+            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
+            return
+        end if
+        if outer.cmdHistoryPos < this.cmdHistory.len then
+            outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
+            outer.insertTextPost = ""
+            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
+        end if
+    end function
+    deleteKey = function()
+        if outer.insertTextPost.len > 0 then
+            outer.insertTextPost = outer.insertTextPost[1:]
+            outer.needsDraw = true
+        end if
+    end function
+    backspaceKey = function()
+        if outer.insertTextPre.len > 0 then
+            outer.insertTextPre = outer.insertTextPre[:-1]
+            outer.needsDraw = true
+        end if
+    end function
+    endKey = function()
+        outer.insertTextPre = outer.insertTextPre + outer.insertTextPost
+        outer.insertTextPost = ""
+        outer.needsDraw = true
+    end function
+    homeKey = function()
+        outer.insertTextPost = outer.insertTextPre + outer.insertTextPost
+        outer.insertTextPre = ""
+    end function
+
+    keyFuncs = {
+        "LeftArrow": @leftArrowKey,
+        "RightArrow": @rightArrowKey,
+        "UpArrow": @upArrowKey,
+        "DownArrow": @downArrowKey,
+        "Delete": @deleteKey,
+        "Backspace": @backspaceKey,
+        "End": @endKey,
+        "Home": @homeKey,
+    }
 
     // Draw screen will show the cursor for us.
-    needsDraw = true
+    // This needs to be really fast.  The longer this processes data,
+    // the worse key input responsiveness is.
     while true
         // Draw the screen with the simulated cursor.
         // Because the cursor isn't flashing at the moment, just stick the whole post text after the cursor.
@@ -411,7 +509,8 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
         // Read the character without showing an explicit prompt.
         // Need to put something in the prompt text, or it will return all the
         // line's text, what's been printed + the typed character.
-        ch = user_input(" ", false, true)
+        // But... we can also add formatting to make the cursor disappear.
+        ch = user_input("<color=#000000><mark=#000000>", false, true)
         if DISPLAY_DEBUGGING == 2 then print("$INPUT '" + ch + "'")
         if ch == "" then return mkRet(true)  // Explicit check for CR
         if self.terminatingChars.indexOf(ch) != null then return mkRet(false)
@@ -420,35 +519,8 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
         // Note: The key press handling won't work here with v5 and extra
         // existing character buffer.  Or does it work right?
         needsDraw = false
-        if ch == "LeftArrow" then
-            if insertTextPre.len > 0 then
-                insertTextPost = insertTextPre[-1] + insertTextPost
-                insertTextPre = insertTextPre[:-1]
-                needsDraw = true
-            end if
-        else if ch =="RightArrow" then
-            if insertTextPost.len > 0 then
-                insertTextPre = insertTextPre + insertTextPost[0]
-                insertTextPost = insertTextPost[1:]
-                needsDraw = true
-            end if
-        else if ch == "Delete" then
-            if insertTextPost.len > 0 then
-                insertTextPost = insertTextPost[1:]
-                needsDraw = true
-            end if
-        else if ch == "Backspace" then
-            if insertTextPre.len > 0 then
-                insertTextPre = insertTextPre[:-1]
-                needsDraw = true
-            end if
-        else if ch == "End" then
-            insertTextPre = insertTextPre + insertTextPost
-            insertTextPost = ""
-            needsDraw = true
-        else if ch == "Home" then
-            insertTextPost = insertTextPre + insertTextPost
-            insertTextPre = ""
+        if keyFuncs.hasIndex(ch) then
+            keyFuncs[ch]()
         else if ch.len == 1 then
             // Needs length checking?
             insertTextPre = insertTextPre + ch

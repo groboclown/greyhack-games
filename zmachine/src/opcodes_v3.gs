@@ -405,8 +405,20 @@ OpV1_JumpZero = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.jz_v1 = @OpV1_JumpZero
 
+// OpV1_Load
+//      load array byte-index -> (result)
+// Store the variable reference operand into the result
+OpV1_Load = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'load': requires 1 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'load': requires storesVarRef")
+    varRef = operands[0].c
+    value = machine.GetVariableRef(varRef)
+    machine.SetVariableRef(storesVarRef, value)
+end function
+Opcodes.load_v1 = @OpV1_Load
+
 // OpV1_LoadB Store byte value
-//      loadw array byte-index -> (result)
+//      loadb array byte-index -> (result)
 // Stores the byte in result from the byte value
 // at address array+byte-index, which must lie in static or dynamic memory.
 OpV1_LoadB = function(machine, operands, storesVarRef, branch)
@@ -441,6 +453,20 @@ OpV1_LoadW = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.loadw_v1 = @OpV1_LoadW
 
+// OpV1_Mod Signed 16-bit remainder.
+//    mod a b -> stores
+OpV1_Mod = function(machine, operands, storesVarRef, branch)
+    if operands.len != 2 then exit("Invalid opcode 'mod': requires 2 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'mod': requires storesVarRef")
+
+    v1 = machine.Signed16(operands[0].c)
+    v2 = machine.Signed16(operands[1].c)
+    if v2 == 0 then exit("Attempted 'mod' by zero")
+    // Need to handle overflow nicely.
+    machine.SetVariableRef(storesVarRef, machine.Unsign16(floor(v1 % v2)))
+end function
+Opcodes.mod_v1 = @OpV1_Mod
+
 // OpV1_Mul Signed 16-bit multiplication.
 //    mul a b -> stores
 OpV1_Mul = function(machine, operands, storesVarRef, branch)
@@ -462,6 +488,34 @@ OpV1_NewLine = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.new_line_v1 = @OpV1_NewLine
 
+// OpV1_Nop
+//     nop
+// No operation.
+OpV1_Nop = function(machine, operands, storesVarRef, branch)
+    // Do nothing
+end function
+Opcodes.nop_v1 = @OpV1_Nop
+
+// OpV1_Not
+//     not a b -> stores
+// Assumed to be on 16-bit numbers.
+OpV1_Not = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'not': requires 1 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'not': requires storesVarRef")
+
+    // Not supported natively.  Need to implement it manually.
+    v1 = operands[0].c
+    res = 0
+    bit = 1
+    while bit < 65536
+        if floor(res / bit) % 2 == 0 then res = res + bit
+        bit = bit * 2
+    end while
+
+    machine.SetVariableRef(storesVarRef, bitNot(res))
+end function
+Opcodes.not_v1 = @OpV1_Not
+
 // OpV1_Or bitwise Or
 //    or a b -> stores
 // Assumed to be on 16-bit numbers.
@@ -471,10 +525,34 @@ OpV1_Or = function(machine, operands, storesVarRef, branch)
 
     v1 = operands[0].c
     v2 = operands[1].c
-    // Need to handle overflow nicely.
     machine.SetVariableRef(storesVarRef, bitOr(v1, v2))
 end function
 Opcodes.or_v1 = @OpV1_Or
+
+// OpV1_OutputStream
+//    output_stream number table
+// If stream is 0, nothing happens. If it is positive, then that stream is selected;
+// if negative, deselected. (Recall that several different streams can be selected at once.)
+// When stream 3 is selected, a table must be given into which text can
+// be printed. The first word always holds the number of characters printed, the
+// actual text being stored at bytes table+2 onward. It is not the interpreter’s
+// responsibility to worry about the length of this table being overrun.
+OpV1_OutputStream = function(machine, operands, storesVarRef, branch)
+    if operands.len < 1 or operatnds.len > 2 then exit("Invalid opcode 'output_stream': requires 1 or 2 arguments")
+
+    streamNumber = machine.Signed16(operands[0].c)
+    if streamNumber == 0 then return
+
+    tableAddr = null
+    if operands.len > 1 then tableAddr = operands[1].c
+
+    if streamNumber > 0 then
+        machine.SetOutputStreamState(streamNumber, true, tableAddr)
+    else  // < 0
+        machine.SetOutputStreamState(-streamNumber, false, tableAddr)
+    end if
+end function
+Opcodes.output_stream_v1 = @OpV1_OutputStream
 
 // OpV1_Print
 //     print <literal-string>
@@ -609,6 +687,94 @@ OpV1_Quit = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.quit_v1 = @OpV1_Quit
 
+// OpV1_Random
+//     random range -> (result)
+// Stores a random number in the result.
+// If range is positive, generates a uniformly random number between 1 and range.
+// If range is negative, the random number generator is seeded to that value and
+// the return value is 0. Most interpreters consider giving 0 as range illegal
+// (because they attempt a division with remainder by the range), but correct
+// behaviour is to reseed the generator in as random a way as the interpreter
+// can (e.g. by using the time in milliseconds).
+OpV1_Random = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'random': requires 2 arguments")
+    if storesVarRef == null then exit("Invalid opcode 'random': requires storesVarRef")
+
+    v1 = machine.Signed16(operands[0].c)
+    if v1 < 0 then
+        rnd(-v1)
+        ret = 0
+    else
+        ret = floor(v1 * rnd()) + 1
+    end if
+    machine.SetVariableRef(storesVarRef, ret)
+end function
+Opcodes.random_v1 = @OpV1_Random
+
+// OpV1_RemoveObject
+//     remove_obj object
+// Detach the object from its parent, so that it no longer
+// has any parent. (Its children remain in its possession.)
+OpV1_RemoveObject = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'remove_obj': requires 1 arguments")
+    OpCodeLogger.Debug("Removing object " + operands[0].c)
+    obj = machine.GetObjectData(operands[0].c)
+    if obj == null then exit("Invalid opcode 'remove_obj': argument is not an object")
+
+    // Whatever obj's previous sibling is, reassign it's sibling to obj's sibling.
+    // If it has no previous sibling, then the parent's child is set to obj's sibling.
+    // This is the exact same logic as what's in the InsertObject, so they should
+    // be joined together.
+    objId = operands[0].c // machine.GetObjectId(obj)
+    objParent = machine.GetObjectParent(obj)  // could be null
+    objSibling = machine.GetObjectSibling(obj)  // could be null
+    objSiblingId = machine.GetObjectId(objSibling)  // could be 0, the null object.
+    if objParent != null then
+        // Reassign the parent links to remove obj from the existing tree.
+        OpCodeLogger.Trace("  removing as child of " + machine.GetObjectId(objParent))
+
+        child = machine.GetObjectChild(objParent)
+        if machine.GetObjectId(child) == objId then
+            // Change the object's sibling to be the first child.
+            OpCodeLogger.Trace("  .. it was the first child.")
+            machine.SetObjectChild(objParent, objSiblingId)
+        else
+            // Find what has obj as the sibling...
+            while child != null
+                if child == null then exit("Invalid object tree: object's parent does not contain the object")
+                childSibling = machine.GetObjectSibling(child)
+                if machine.GetObjectId(childSibling) == objId then
+                    // switch out the sibling to remove obj from the child chain.
+                    OpCodeLogger.Trace("  .. it was the sibling of " + machine.GetObjectId(child))
+                    machine.SetObjectSibling(child, objSiblingId)
+                    break
+                end if
+                child = childSibling
+            end while
+        end if
+        // Skipping clearing out obj's sibling, because it will be set to the destination's
+        // child.
+    else
+        // It's fine if the object has no parent.  However, this should mean that
+        // it has no siblings.
+        if objSibling != null then exit("Invalid object tree: top object has sibling")
+    end if
+
+    // Set the object's parent as the null object.
+    OpCodeLogger.Trace("  setting null object as parent of " + objId)
+    machine.SetObjectParent(obj, 0)
+end function
+Opcodes.remove_obj_v1 = @OpV1_RemoveObject
+
+
+// OpV1_RFalse
+//     rfalse
+// Return false (0) from the current routine.
+OpV1_RFalse = function(machine, operands, storesVarRef, branch)
+    machine.PopStackFrame(0)
+end function
+Opcodes.rfalse_v1 = @OpV1_RFalse
+
 // OpV1_Restart
 //     restart
 // Restarts the game immediately.
@@ -619,6 +785,24 @@ OpV1_Restart = function(machine, operands, storesVarRef, branch)
     machine.StartGame()
 end function
 Opcodes.restart_v1 = @OpV1_Restart
+
+// OpV1_Restore
+//     restore (branch label)
+// In Version 3, the branch is never actually made, since either the game
+// has successfully picked up again from where it was saved, or it failed
+// to load the save game file.
+// As with restart, the transcription and fixed font bits
+// survive. The interpreter gives the game a way of knowing that
+// a restore has just happened (but how?).
+OpV1_Restore = function(machine, operands, storesVarRef, branch)
+    if branch == null then exit("Invalid opcode 'restore': requires branch label")
+    // This is a very weird instruction.  The call to restore can alter everything
+    // in the state of the system, so branching after the complete state has changed
+    // doesn't make sense.
+    machine.RestoreGame()
+    // machine.PerformBranch(branch, res)
+end function
+Opcodes.restore_v1 = @OpV1_Restore
 
 // OpV1_Ret
 //     ret value
@@ -646,13 +830,16 @@ OpV1_RTrue = function(machine, operands, storesVarRef, branch)
 end function
 Opcodes.rtrue_v1 = @OpV1_RTrue
 
-// OpV1_RFalse
-//     rfalse
-// Return false (0) from the current routine.
-OpV1_RFalse = function(machine, operands, storesVarRef, branch)
-    machine.PopStackFrame(0)
+// OpV1_Save
+//     save (branch label)
+// Attempts to save the game (all questions about filenames are
+// asked by interpreters) and branches if successful.
+OpV1_Save = function(machine, operands, storesVarRef, branch)
+    if branch == null then exit("Invalid opcode 'save': requires branch label")
+    res = machine.SaveGame()
+    machine.PerformBranch(branch, res)
 end function
-Opcodes.rfalse_v1 = @OpV1_RFalse
+Opcodes.save_v1 = @OpV1_Save
 
 // OpV1_SetAttribute
 //      set_attr object attribute
