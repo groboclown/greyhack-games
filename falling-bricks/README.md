@@ -2,7 +2,7 @@
 
 A block movement style game, for the Grey Hack game.
 
-[Preview Image](falling-bricks.gif) *Warning - flashes heavily; standard seizure warnings apply.*
+![Preview Image](falling-bricks.gif)
 
 
 ## Installing
