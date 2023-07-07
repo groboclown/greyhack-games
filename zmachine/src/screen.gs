@@ -299,12 +299,13 @@ ScreenWindow.AddUserInput = function(originalText, includeNewline)
     // the native code has read in the input.  The screen needs to insert the text
     // and possibly scroll.
 
-    // TODO should convert the original text to zscii characters, specifically around unicdoe.
+    // TODO should convert the original text to zscii characters, specifically around unicode.
 
     if includeNewline then
         originalText = originalText + ScreenWindow__EOL1
     end if
-    // TODO Look at not hard-coding input text color.
+    // TODO Look at not hard-coding processed input text color.
+    // Technically, it should be the same color as was last displayed.
     self.printFormattedZscii(originalText, "#c0c0c0", self.BackgroundColor24, false, false)
 end function
 

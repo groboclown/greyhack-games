@@ -74,6 +74,9 @@ Native.SetZsciiUnicodeTable = function(table)
         key = table[code]
         self.zsciiSpecialUnicode[key] = code
     end for
+    // There is a special case for tab in the unicode table that we'll overwrite for
+    // the reverse conversion.
+    self.zsciiSpecialUnicode[" "] = " ".code
 end function
 
 // SaveGame Store the data to a save file.
@@ -257,8 +260,7 @@ Native.renderFmt = function(fmt, startPos)
 end function
 
 Native.drawCurrentScreen = function()
-    if DISPLAY_DEBUGGING == 0 then clear_screen
-    if DISPLAY_DEBUGGING == 2 then print("===== clear screen =====")
+    lines = []
     for idx in self.screenContents.indexes
         out = self.screenContents[idx]
         if self.cursorRow == idx and self.cursorColumn >= 0 then
@@ -268,11 +270,15 @@ Native.drawCurrentScreen = function()
             out = out + "<pos=" + (self.cursorColumn * self.fontWidth) + "><sprite index=0 color=" + self.cursorColor + ">"
         end if
         if DISPLAY_DEBUGGING == 2 then
-            print("$DISPLAY <noparse>" + out.replace("<", "$"))
+            lines.push("$DISPLAY <noparse>" + out.replace("<", "$"))
         else
-            print(out)
+            lines.push(out)
         end if
     end for
+    // So much faster to redraw the screen in a single call.
+    // print(lines.join(char(10)), DISPLAY_DEBUGGING == 0)
+    if DISPLAY_DEBUGGING == 0 then clear_screen
+    print(lines.join(char(10)))
 end function
 
 // SetTerminatingChars Set a list of characters that terminate input.
@@ -342,6 +348,7 @@ end function
 Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
     // Should do a "inputStream" test.  But we don't.
     if DISPLAY_DEBUGGING == 2 then print("$ReadLine(" + maxChars + ", " + cursorColumn +", " + cursorRow + ")")
+    clearScreen = DISPLAY_DEBUGGING == 0
 
     display = [] + self.screenContents
 
@@ -388,10 +395,14 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
                 print("$DISPLAY " + row.replace("<", "$"))
             end for
         else
-            if DISPLAY_DEBUGGING == 0 then clear_screen
-            for row in display
-                print(row)
-            end for
+            // The clear_screen then one by one print causes a flashing
+            // on some screens.  Instead, just print it as a single print.
+            //if DISPLAY_DEBUGGING == 0 then clear_screen
+            //for row in display
+            //    print(row)
+            //end for
+            // NOTE: this will always clear screen because of the trailing "1"
+            print(display.join(char(10)), clearScreen)
         end if
 
         // Read the character without showing an explicit prompt.

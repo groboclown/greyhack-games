@@ -121,7 +121,7 @@ Interpreter.DumpStr = function()
 
     ret = ret + ["", "    **** Story file default dictionary ****", ""]
     self.log.Debug("Generating the dictionary at " + toHex(self.machine.DictionaryAddress))
-    dict = self.machine.ParseDictionary(self.machine.DictionaryAddress)
+    dict = self.machine.ParseDictionary(self.machine.DictionaryAddress).dict
     for index in dict.indexes
         item = dict[index]
         ret.push("  " + item[1] + " (" + toHex(item[0]) + ")  '" + index + "'")

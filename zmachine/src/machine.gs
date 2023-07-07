@@ -636,6 +636,7 @@ MachineState.ReadInputLine = function(maxCharCount)
     cursor = self.screen.GetActiveCursor()
     userInput = self.native.ReadLine(maxCharCount, cursor[0], cursor[1])
     // TODO send this to output stream 4.
+    cursor2 = self.screen.GetActiveCursor()
     self.screen.AddUserInput(userInput[2], userInput[0])
     return userInput
 end function
@@ -672,6 +673,7 @@ MachineState.PrintZscii = function(text)
 
     // Stream 4 is just user input.  Printing is not user input.
 end function
+
 
 // ====================================================================
 
@@ -963,6 +965,130 @@ end function
 
 // ====================================================================
 
+// LoadParseTable Perform lexical analysis and store the result in the parse table at the given address.
+//
+// The text position will be adjusted based on the text insert position.
+MachineState.LoadParseTable = function(zsciiText, parseTableAddress, textInsertPos, dictionaryAddress = null)
+    parsed = self.PerformLexicalAnalysis(zsciiText, dictionaryAddress)
+    // Get the table buffer size, which is stored as the maximum number of storable parsed words
+    wordCount = self.ReadByte(parseTableAddress)
+    parseTableAddress = parseTableAddress + 1
+
+    // Versions 1 and 2 and early Version 3 games mistakenly write the parse buffer length 240 into byte 0
+    if wordCount == 240 then wordCount = 59
+    if parsed.len < wordCount then wordCount = parsed.len
+
+    // The number of words is written in byte 1
+    self.SetByte(parseTableAddress, wordCount)
+    parseTableAddress = parseTableAddress + 1
+    
+    for idx in range(0, wordCount - 1)
+        word = parsed[idx]
+        // Each block consists of the byte address of the word in the dictionary,
+        // if it is in the dictionary, or 0 if it isn’t;
+        self.SetWord(parseTableAddress, word[0])
+        parseTableAddress = parseTableAddress + 2
+
+        // followed by a byte giving the number of letters in the word;
+        self.SetByte(parseTableAddress, word[1])
+        parseTableAddress = parseTableAddress + 1
+
+        // and finally a byte giving the position in the text-buffer of the first letter of the word.
+        self.SetByte(parseTableAddress, word[2] + textInsertPos)
+        parseTableAddress = parseTableAddress + 1
+    end for
+end function
+
+// LexicalAnalysis Perform lexical analysis on the zscii text (byte array).
+//
+// This will split the text into words by splitting on spaces (which are ignored)
+// and word separators (which are not and are put into their own words.)
+//
+// This constructs a parse table data structure that must be written to a
+// parse table memory address.  The returned value is a list containing the
+// parsed "words".  Each entry in the list is the array
+// [dictionary word address (0 if not in dictionary), word letter count, offset of first letter of word in text]
+MachineState.PerformLexicalAnalysis = function(zsciiText, dictionaryAddress = null)
+    if dictionaryAddress == null then dictionaryAddress = self.DictionaryAddress
+    if not (zsciiText isa list) then exit("Invalid usage: called LexicalAnalysis with " + typeof(zsciiText))
+    
+    // Force addition of a space character to the end of the text array.
+    // This is to make the text parsing simpler.
+    zsciiText = zsciiText + [32]  // space character zscii code.
+
+    // Should translate the zscii text to z-character text.  But instead,
+    // we go backwards, translate the dictionary z-character text to zscii.
+    // This isn't standard.
+    dictTable = self.ParseDictionary(dictionaryAddress)
+    dictEntries = dictTable.dict
+    wordSeparators = dictTable.wordSeparators  // array of zscii codes
+
+    maxWordLen = 6
+    if self.FileVersion >= 4 then maxWordLen = 9
+
+    ret = []
+    state = 0
+    start = 0
+    word = ""
+    for pos in zsciiText.indexes
+        ch = zsciiText[pos]
+        asStr = char(ch)
+        // outputting the 0 character leads to cut-n-paste problems.
+        if ch != 0 then MachineLogln(" ; parsing '" + asStr + "' (" + ch + ")")
+        cond = 0  // normal letter
+        if ch == 32 or ch == 0 then cond = 1  // whitespace and zero terminator
+        if wordSeparators.indexOf(ch) != null then cond = 2  // word separator
+
+        if state == 1 and cond != 0 then
+            // stop the old state.
+            entryAddress = 0
+            if word.len > maxWordLen then word = word[:maxWordLen]
+            if dictEntries.hasIndex(word) then entryAddress = dictEntries[word][0]
+            MachineLogln(" ; inserting word '" + word + "' @" + entryAddress + " " + (pos - start) + " characters")
+            ret.push([
+                entryAddress,  // dictionary entry address
+                pos - start,  // letter count
+                start,  // word start character offset in text array
+            ])
+            // go back to looking for a new word
+            state = 0
+            // Note that cond is still != 0, which is important for
+            // the next steps.
+        end if
+        if cond == 2 then
+            // Word separator is inserted as its own word.
+            if not dictEntries.hasIndex(asStr) then exit("Bad story file: has word separator '" + asStr + "' without dictionary entry")
+            entry = dictEntries[asStr]
+            MachineLogln(" ; inserting word-separator '" + asStr + "' @" + entryAddress + " 1 character")
+            ret.push([
+                entry[0],  // dictionary entry address
+                1,  // word separators always have a word length of 1
+                pos,  // character offset in text array
+            ])
+            // Keep going.  It essentially goes back to the state it entered on.
+            continue
+        end if
+
+        // At this point, state is one of:
+        //     state == 0 and cond == 0
+        //     state == 0 and cond == 1
+        //     state == 1 and cond == 0
+        if state == 0 and cond == 0 then
+            // Found the start of a word.
+            state = 1
+            start = pos
+            word = ""
+        end if
+
+        // This if statement is logically valid, but doesn't
+        // add anything to the correctness of the program.
+        if state == 1 then
+            word = word + asStr
+        end if
+    end for
+    return ret
+end function
+
 // ParseDictionary Parse the dictionary at the given address.
 //
 // Normally, this is just done for the static dictionary,
@@ -995,6 +1121,8 @@ MachineState.ParseDictionary = function(physAddress)
         // 6 bytes, 9 z-characters
         charCount = 9
     end if
+
+    startAddress = physAddress
     dict = {}
 
     for i in range(0, entryCount - 1)
@@ -1004,9 +1132,18 @@ MachineState.ParseDictionary = function(physAddress)
         physAddress = physAddress + entryLength
     end for
 
+    ret = {
+        "dict": dict,
+        "wordSeparators": inputCodes,
+        "entryLength": entryLength,
+        "charCount": charCount,
+        "entryAddress": startAddress,
+        "dictAddress": dictAddress,
+    }
+
     // Only cache static dictionaries.
-    if dictAddress >= self.StaticMemoryBaseAddress then self.cachedDictionaries[dictAddress] = dict
-    return dict
+    if dictAddress >= self.StaticMemoryBaseAddress then self.cachedDictionaries[dictAddress] = ret
+    return ret
 end function
 
 // ====================================================================
