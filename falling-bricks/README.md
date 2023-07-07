@@ -46,8 +46,3 @@ You'll need the controller terminal to have the focus in order to play.  To play
 * up arrow - rotate the block.
 * z - rotate the block one way.
 * x - rotate the block the other way.
-
-
-# Bugs
-
-* There's a super annoying flicker.  The refresh rate needs to be set just right.
