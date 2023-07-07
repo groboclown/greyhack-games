@@ -19,6 +19,13 @@ For more complex games, you'll need to follow the game's own instructions for it
 A falling bricks game, in the style of T*tris.
 
 
+## Grey ZMachine
+
+[zmachine](zmachine)
+
+A [Z-Machine](http://inform-fiction.org/zmachine/) interpreter for Grey Hack.
+
+
 # License
 
 All the files in this repository are under the [MIT License](LICENSE).

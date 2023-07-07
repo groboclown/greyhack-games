@@ -1,7 +1,9 @@
 // TIMING CONSTANTS
 // adjust these to make the game run at an appropriate rate.
-BASE_SPEED = 40
-FRAMES_PER_SECOND = 30
+BASE_SPEED = 30
+FRAMES_PER_SECOND = 20
+FREQUENCY = 1.0 / FRAMES_PER_SECOND
+if FREQUENCY <= 0.2 then FREQUENCY = 0.201  // for performance reasons
 
 if params.len <= 0 or params[0] == "-h" or params[0] == "--help" then
     print("A prototype at a falling bricks game.")
@@ -313,11 +315,10 @@ DrawFrame = function(state)
         if y < previewLines.len then line = line + previewLines[y]
         lines.push(line)
     end for
-    clear_screen
-    for line in lines
-        print(line)
-    end for
-    print(state.border)
+    lines.push(state.border)
+    //clear_screen
+    // A single print is much faster and reduces flashing.
+    print(lines.join(char(10)), 1)
 end function
 
 // GameStep Perform one frame of physics
@@ -536,7 +537,11 @@ DoIntro = function(controlFile, state)
 end function
 
 DelaySomehow = function()
-    wait(1.0 / FRAMES_PER_SECOND)
+    // If this is > 0.2 (say, 0.201), then the
+    // print(foo, 1)
+    // will properly clear the screen and cut out lots of
+    // flashing.
+    wait(FREQUENCY)
 end function
 
 
