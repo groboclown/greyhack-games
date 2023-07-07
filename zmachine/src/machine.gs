@@ -377,7 +377,7 @@ MachineState.GetVariableRef = function(variableRef)
             return stack[-1]
         end if
         self.log.Info("Getting variable reference from empty stack")
-        return 0
+        return null
     end if
     callLocals = self.callStack[-1].locals
     // variableRef will reference index - 1
@@ -635,9 +635,15 @@ end function
 MachineState.ReadInputLine = function(maxCharCount)
     cursor = self.screen.GetActiveCursor()
     userInput = self.native.ReadLine(maxCharCount, cursor[0], cursor[1])
+    if userInput[2] == "$10" then
+        // Debugging Input Handler
+        print(DumpMachine(self).join(char(10)))
+        user_input("[MORE]")
+        return [true, [], ""]
+    end if
     // TODO send this to output stream 4.
-    cursor2 = self.screen.GetActiveCursor()
     self.screen.AddUserInput(userInput[2], userInput[0])
+    self.native.DrawScreen(self.screen.Render())
     return userInput
 end function
 
@@ -662,8 +668,8 @@ MachineState.PrintZscii = function(text)
     if self.Stream1Active then
         self.screen.PrintZscii(text)
         self.native.DrawScreen(self.screen.Render())
-        cursor = self.screen.GetActiveCursor()
-        self.native.SetCursor(cursor[0], cursor[1])
+        //cursor = self.screen.GetActiveCursor()
+        //self.native.SetCursor(cursor[0], cursor[1])
     end if
 
     // Stream 2 == transcript
@@ -929,6 +935,23 @@ MachineState.getPropertyAddressInfo = function(propertyAddress)
     return [propNum, propLen, dataAddress, propertyAddress, dataAddress + propLen]
 end function
 
+// GetPropertyInfoForDataAddress Given the property's data address, get the property info
+MachineState.GetPropertyInfoForDataAddress = function(propertyDataAddress)
+    if propertyDataAddress == 0 or propertyDataAddress == null then return null
+    if self.FileVersion >= 4 then
+        prevByte = self.ReadByte(propAddr - 1)
+        if prevByte >= 128 then
+            // Top bit it set, so -1 is the second byte; need the first byte.
+            propertyDataAddress = propertyDataAddress - 2
+        else
+            propertyDataAddress = propertyDataAddress - 1
+        end if
+    else
+        propertyDataAddress = propertyDataAddress - 1
+    end if
+    return self.getPropertyAddressInfo(propertyDataAddress)
+end function
+
 // GetObjectProperty Get details of the object's property at the ID.
 //
 // Returns a map with [propNumber, dataSizeInBytes, dataAddress, and other stuff]
@@ -963,6 +986,26 @@ MachineState.GetObjectPropertyWord = function(objectValues, propertyId)
     exit("Invalid property data size " + propertyAddressInfo[1] + "; required byte or word")
 end function
 
+// SetObjectPropertyWord Set the 8 or 16-bit unsigned data value for the object's property.
+MachineState.SetObjectPropertyWord = function(objectValues, propertyId, value)
+    propertyAddressInfo = self.GetObjectProperty(objectValues, propertyId)
+
+    if propertyAddressInfo == null then
+        self.log.Debug("Getting default property for " + propertyId)
+        return self.GetObjectPropertyDefault(propertyId)
+    end if
+
+    // If the property has length 1, the value is a byte and only the least
+    // significant part of the raw byte matters.
+    if propertyAddressInfo[1] == 1 then
+        self.SetByte(propertyAddressInfo[2], value % 256)
+    else if propertyAddressInfo[1] == 2 then
+        self.SetWord(propertyAddressInfo[2], value)
+    else
+        exit("Invalid property data size " + propertyAddressInfo[1] + "; required byte or word")
+    end if
+end function
+
 // ====================================================================
 
 // LoadParseTable Perform lexical analysis and store the result in the parse table at the given address.
@@ -981,7 +1024,9 @@ MachineState.LoadParseTable = function(zsciiText, parseTableAddress, textInsertP
     // The number of words is written in byte 1
     self.SetByte(parseTableAddress, wordCount)
     parseTableAddress = parseTableAddress + 1
-    
+
+    if wordCount <= 0 then return
+
     for idx in range(0, wordCount - 1)
         word = parsed[idx]
         // Each block consists of the byte address of the word in the dictionary,
@@ -1413,6 +1458,10 @@ end function
 MachineState.StartGame = function()
     // Reset game changable data.
     // For the header, only the flag 2 can be changed.
+    // The only pieces of information surviving from the previous state are the
+    // "transcribing to printer" bit (bit 0 of ’Flags 2′ in the header, at
+    // address 0x10) and the "use fixed pitch font" bit (bit 1 of 'Flags 2').
+
     self.headerData[16] = 0  // 0x10
     self.headerData[17] = 0  // 0x11
     if self.UsesColors then

@@ -192,8 +192,7 @@ Screen.GetActiveCursor = function()
             // CursorY is position in the full height.  We need it adjusted for the screen.
             // This depends on whether the window is scrolling or not.
             if window.ScrollsUp then
-                // WHY IS THIS + 2 NEEDED????
-                return [window.CursorX, height + window.CursorY - (window.StoredLines - window.Height) + 2]
+                return [window.CursorX, height + window.CursorY - (window.StoredLines - window.Height) + 1]
             else
                 return [window.CursorX, height + window.CursorY]
             end if
@@ -280,6 +279,7 @@ ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, col
     // know when to display the "[MORE]" line and pause for user.
     ret.LineCount = 0
 
+    // CursorX is from 0 to width-1, and CursorY is from 0 to stored lines - 1.
     ret.CursorX = 0
     ret.CursorY = 0
 
@@ -303,10 +303,17 @@ ScreenWindow.AddUserInput = function(originalText, includeNewline)
 
     if includeNewline then
         originalText = originalText + ScreenWindow__EOL1
+        // For some reason, the cursor Y is wrong.  Need to figure out why.
+        // This is probably related to why the GetActiveCursor has a + 1 on it.
+        // This is also clearly wrong, because it causes the cursorX to be wrong.
+        if self.ScrollsUp then self.CursorY = self.StoredLines - 1
     end if
     // TODO Look at not hard-coding processed input text color.
     // Technically, it should be the same color as was last displayed.
     self.printFormattedZscii(originalText, "#c0c0c0", self.BackgroundColor24, false, false)
+
+    // Reset the line count to allow proper wait for more.
+    self.LineCount = 0
 end function
 
 ScreenWindow__EOL1 = char(13)
@@ -329,10 +336,8 @@ ScreenWindow.printFormattedZscii = function(text, fg, bg, bold, italic)
 
     // Early check to prevent more complex behavior.
     if self.Height <= 0 then return
-    if self.checkY() then return  // out of bounds before we start.
 
     buff = ""
-    nextX = self.CursorX
     for ch in text.values()
         drawChar = true
         if ch == ScreenWindow__EOL1 then
@@ -349,11 +354,9 @@ ScreenWindow.printFormattedZscii = function(text, fg, bg, bold, italic)
                 })
                 buff = ""
             end if
-            nextX = 0
             self.CursorX = 0
-            self.CursorY = self.CursorY + 1
-            if self.checkY() then return  // can't draw anything else
-        else if nextX >= self.Width then
+            if self.addNewline() then return  // can't draw anything else
+        else if self.CursorX >= self.Width then
             // Reached window width.
             if not self.CanBufferText then
                 // No word-wrap.  Just insert the existing text and keep searching for EOL.
@@ -384,7 +387,7 @@ ScreenWindow.printFormattedZscii = function(text, fg, bg, bold, italic)
                     end while
                     if pos < 0 then
                         // No break found.  Otherwise, move the text to the next line.
-                        if nextX == 0 then
+                        if self.CursorX == 0 then
                             // The buffer takes up the whole window width.  Need to
                             // hard break the text.
                             prevLine = buff[:self.Width-1] + "-"
@@ -416,12 +419,10 @@ ScreenWindow.printFormattedZscii = function(text, fg, bg, bold, italic)
             })
 
             // Handle cursor wrapping
-            nextX = buff.len
             self.CursorX = buff.len
-            self.CursorY = self.CursorY + 1
-            if self.checkY() then return  // can't draw anything else
+            if self.addNewline() then return  // can't draw anything else
         else if ch == ScreenWindow__TAB then
-            if nextX == 0 then
+            if self.CursorX == 0 then
                 // First character of the line is a tab, so indent the line.
                 // Assume that the window width is more than 4.
                 ch = "    "
@@ -432,7 +433,7 @@ ScreenWindow.printFormattedZscii = function(text, fg, bg, bold, italic)
         end if
         if drawChar then
             buff = buff + ch
-            nextX = nextX + ch.len
+            self.CursorX = self.CursorX + ch.len
         end if
     end for
     if buff.len > 0 then
@@ -446,17 +447,25 @@ ScreenWindow.printFormattedZscii = function(text, fg, bg, bold, italic)
             "i": italic,
         })
     end if
-    self.CursorX = nextX
 end function
 
 // Called on moving down a Y.
-ScreenWindow.checkY = function()
-    if self.CursorY >= self.StoredLines then
+ScreenWindow.addNewline = function()
+    self.LineCount = self.LineCount + 1
+    if self.LineCount + 1 >= self.Height and self.ScrollsUp then
+        // FIXME should wait for a "more" screen, but that requires
+        // calling native.
+        // Then, after the more,
+        // self.LineCount = 0
+    end if
+    if self.CursorY + 1 >= self.StoredLines then
         if not self.ScrollsUp then return true  // can't scroll text up, so exit immediately.
         self.FormattedLines.pull()  // remove the top line
         self.FormattedLines.push([])
         self.CursorY = self.StoredLines - 1  // keep it on the last line.
         self.CursorX = 0  // move the x cursor to the start of the line.
+    else
+        self.CursorY = self.CursorY + 1
     end if
     return false
 end function
@@ -481,7 +490,7 @@ end function
 ScreenWindow.SetHeight = function(lineCount)
     if lineCount > self.StoredLines then
         // Insert lines into the formatted lines, either at the top or bottom.
-        while self.StoredLines.len < lineCount
+        while self.FormattedLines.len < lineCount
             if self.ScrollsUp then
                 // Add to the top.
                 self.FormattedLines.insert(0, [])
@@ -493,6 +502,8 @@ ScreenWindow.SetHeight = function(lineCount)
     end if
     self.Height = lineCount
     if self.CursorY >= lineCount then self.CursorY = lineCount - 1
+    // This is done on a rare occasion, so just reset the counted line height
+    self.LineCount = 0
 end function
 
 // SetScreenColorIndex Set the color index.

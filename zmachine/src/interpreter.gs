@@ -67,6 +67,10 @@ end function
 
 // Dump Dump the memory of the data to a string, for debugging purposes.
 Interpreter.DumpStr = function()
+    return DumpMachine(self.machine)
+end function
+
+DumpMachine = function(machine)
     toHex = function(num, count=4)
         if num == null then return "(null)"
         H = "0123456789abcdef"
@@ -78,11 +82,11 @@ Interpreter.DumpStr = function()
         return r
     end function
 
-    if self.machine.StatusLineType == null then
+    if machine.StatusLineType == null then
         interpreterFlags = "(explicit display)"
-    else if self.machine.StatusLineType == 0 then
+    else if machine.StatusLineType == 0 then
         interpreterFlags = "Display score/moves"
-    else if self.machine.StatusLineType == 2 then
+    else if machine.StatusLineType == 2 then
         interpreterFlags = "Display hours:minutes"
     end if
     // StatusLineType The status line display done by the interpreter
@@ -92,55 +96,55 @@ Interpreter.DumpStr = function()
 
     ret = [
         "    **** Story file header ****",
-        "Z-code version:           " + self.machine.FileVersion,
+        "Z-code version:           " + machine.FileVersion,
         "Interpreter flags:        " + interpreterFlags,
-        "Release number:           " + self.machine.ReleaseNumber,
-        "Size of resident memory:  " + toHex(self.machine.HighMemoryMark),
-        "Start PC:                 " + toHex(self.machine.StartPC),
-        "Routine Offset (v6+)      " + toHex(self.machine.routineOffset, 8),
-        "String Offset (v6+)       " + toHex(self.machine.stringOffset, 8),
-        "Dictionary address:       " + toHex(self.machine.DictionaryAddress),
-        "Object table address:     " + toHex(self.machine.ObjectTableAddress),
-        "Global variables address: " + toHex(self.machine.GlobalVariablesTableAddress),
-        "Static memory address:    " + toHex(self.machine.StaticMemoryBaseAddress),
-        //"Size of dynamic memory:   " + toHex(self.machine.StaticMemoryBaseAddress), ??
+        "Release number:           " + machine.ReleaseNumber,
+        "Size of resident memory:  " + toHex(machine.HighMemoryMark),
+        "Start PC:                 " + toHex(machine.StartPC),
+        "Routine Offset (v6+)      " + toHex(machine.routineOffset, 8),
+        "String Offset (v6+)       " + toHex(machine.stringOffset, 8),
+        "Dictionary address:       " + toHex(machine.DictionaryAddress),
+        "Object table address:     " + toHex(machine.ObjectTableAddress),
+        "Global variables address: " + toHex(machine.GlobalVariablesTableAddress),
+        "Static memory address:    " + toHex(machine.StaticMemoryBaseAddress),
+        //"Size of dynamic memory:   " + toHex(machine.StaticMemoryBaseAddress), ??
         "Game flags:               ()",
-        "Serial number:            " + self.machine.SerialNumber,
-        "Abbreviations address:    " + toHex(self.machine.AbbreviationsTableAddress),
-        "File size:                " + toHex(self.machine.FileLen, 8),
-        "Checksum:                 " + toHex(self.machine.Checksum),
-        "Alphabet table address:   " + toHex(self.machine.AlphabetTableAddress),
-        "Terminating table address:" + toHex(self.machine.TerminatingCharactersTableAddress),
+        "Serial number:            " + machine.SerialNumber,
+        "Abbreviations address:    " + toHex(machine.AbbreviationsTableAddress),
+        "File size:                " + toHex(machine.FileLen, 8),
+        "Checksum:                 " + toHex(machine.Checksum),
+        "Alphabet table address:   " + toHex(machine.AlphabetTableAddress),
+        "Terminating table address:" + toHex(machine.TerminatingCharactersTableAddress),
         "",
         "    **** Abbreviations ****",
         "",
     ]
-    for index in self.machine.cachedAbbreviations.indexes
-        ret.push("[" + index + "] '" + self.machine.cachedAbbreviations[index] + "'")
+    for index in machine.cachedAbbreviations.indexes
+        ret.push("[" + index + "] '" + machine.cachedAbbreviations[index] + "'")
     end for
 
     ret = ret + ["", "    **** Story file default dictionary ****", ""]
-    self.log.Debug("Generating the dictionary at " + toHex(self.machine.DictionaryAddress))
-    dict = self.machine.ParseDictionary(self.machine.DictionaryAddress).dict
+    // self.log.Debug("Generating the dictionary at " + toHex(machine.DictionaryAddress))
+    dict = machine.ParseDictionary(machine.DictionaryAddress).dict
     for index in dict.indexes
         item = dict[index]
         ret.push("  " + item[1] + " (" + toHex(item[0]) + ")  '" + index + "'")
     end for
 
     ret = ret + ["", "    **** Object 2 Information ****", ""]
-    data = self.machine.GetObjectData(2)
+    data = machine.GetObjectData(2)
     ret = ret + [
         "Object Id:    1",
-        "Object Name:  '" + self.machine.GetObjectName(data) + "'",
-        "Parent Id:    " + self.machine.GetObjectParent(data),
-        "Child Id:     " + self.machine.GetObjectChild(data),
-        "Sibling Id:   " + self.machine.GetObjectSibling(data),
+        "Object Name:  '" + machine.GetObjectName(data) + "'",
+        "Parent Id:    " + machine.GetObjectParent(data),
+        "Child Id:     " + machine.GetObjectChild(data),
+        "Sibling Id:   " + machine.GetObjectSibling(data),
     ]
-    propAddress = self.machine.getFirstPropertyAddress(data)
-    propInfo = self.machine.getPropertyAddressInfo(propAddress)
+    propAddress = machine.getFirstPropertyAddress(data)
+    propInfo = machine.getPropertyAddressInfo(propAddress)
     while propInfo != null
         ret.push("Property " + propInfo[0] + ": " + propInfo[1] + " bytes")
-        propInfo = self.machine.getPropertyAddressInfo(propInfo[4])
+        propInfo = machine.getPropertyAddressInfo(propInfo[4])
     end while
 
     return ret

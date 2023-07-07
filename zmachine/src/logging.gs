@@ -66,19 +66,27 @@ DISPLAY_DEBUGGING = 0
 // Log machine parsing progress.
 // Used to debug the machine parser and opcode handling.
 // A bit of native nonsense has crept into this...
-//get_shell.host_computer.touch(home_dir + "/zmachine-out.txt")
-MACHINE_PROGRESS = get_shell.host_computer.File(home_dir + "/zmachine-out.txt")
+MACHINE_PROGRESS_IDX = 0
+if not get_shell.host_computer.touch(home_dir, "zmachine0.txt") then exit("Failed to create file (1)")
+MACHINE_PROGRESS = get_shell.host_computer.File(home_dir + "/zmachine0.txt")
+if MACHINE_PROGRESS == null then exit("Failed to create file (2)")
 MACHINE_PROGRESS.set_content("")
-//MACHINE_PROGRESS_CONTENT = ""
+MACHINE_PROGRESS_CONTENT = ""
 MachineLog = function(text)
-    //MACHINE_PROGRESS_CONTENT = MACHINE_PROGRESS_CONTENT + str(text)
-    MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content + text)
+    for ch in str(text).values
+        if ch < 10 or ch > 127 then ch = "\?"
+        outer.MACHINE_PROGRESS_CONTENT = outer.MACHINE_PROGRESS_CONTENT + ch
+    end for
 end function
 MachineLogln = function(text)
-    //MACHINE_PROGRESS_CONTENT = MACHINE_PROGRESS_CONTENT + str(text)
-    //MACHINE_PROGRESS.set_content(MACHINE_PROGRESS_CONTENT + char(10))
-    MACHINE_PROGRESS.set_content(MACHINE_PROGRESS.get_content + text + char(10))
-
-    //print(MACHINE_PROGRESS_CONTENT)
-    //MACHINE_PROGRESS_CONTENT = ""
+    MachineLog(text + char(10))
+    outer.MACHINE_PROGRESS.set_content(outer.MACHINE_PROGRESS_CONTENT)
+    if outer.MACHINE_PROGRESS_CONTENT.len > 10000 then
+        outer.MACHINE_PROGRESS_IDX = outer.MACHINE_PROGRESS_IDX + 1
+        if not get_shell.host_computer.touch(home_dir, "zmachine" + outer.MACHINE_PROGRESS_IDX + ".txt") then exit("Failed to create file (3)")
+        outer.MACHINE_PROGRESS = get_shell.host_computer.File(home_dir + "/zmachine" + outer.MACHINE_PROGRESS_IDX + ".txt")
+        if outer.MACHINE_PROGRESS == null then exit("Failed to create file (4) " + outer.MACHINE_PROGRESS_IDX)
+        outer.MACHINE_PROGRESS.set_content("")
+        outer.MACHINE_PROGRESS_CONTENT = ""
+    end if
 end function
