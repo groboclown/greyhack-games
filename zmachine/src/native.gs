@@ -385,24 +385,27 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
     end function
 
     // Draw screen will show the cursor for us.
+    needsDraw = true
     while true
         // Draw the screen with the simulated cursor.
         // Because the cursor isn't flashing at the moment, just stick the whole post text after the cursor.
-        display[cursorRow] = origCursorRow + insertTextPre + cursorFlavor + insertTextPost
-        if DISPLAY_DEBUGGING == 2 then
-            print("===== clear screen for input ====")
-            for row in display
-                print("$DISPLAY " + row.replace("<", "$"))
-            end for
-        else
-            // The clear_screen then one by one print causes a flashing
-            // on some screens.  Instead, just print it as a single print.
-            //if DISPLAY_DEBUGGING == 0 then clear_screen
-            //for row in display
-            //    print(row)
-            //end for
-            // NOTE: this will always clear screen because of the trailing "1"
-            print(display.join(char(10)), clearScreen)
+        if needsDraw then
+            display[cursorRow] = origCursorRow + insertTextPre + cursorFlavor + insertTextPost
+            if DISPLAY_DEBUGGING == 2 then
+                print("===== clear screen for input ====")
+                for row in display
+                    print("$DISPLAY " + row.replace("<", "$"))
+                end for
+            else
+                // The clear_screen then one by one print causes a flashing
+                // on some screens.  Instead, just print it as a single print.
+                //if DISPLAY_DEBUGGING == 0 then clear_screen
+                //for row in display
+                //    print(row)
+                //end for
+                // NOTE: this will always clear screen because of the trailing "1"
+                print(display.join(char(10)), clearScreen)
+            end if
         end if
 
         // Read the character without showing an explicit prompt.
@@ -416,33 +419,40 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
 
         // Note: The key press handling won't work here with v5 and extra
         // existing character buffer.  Or does it work right?
+        needsDraw = false
         if ch == "LeftArrow" then
             if insertTextPre.len > 0 then
                 insertTextPost = insertTextPre[-1] + insertTextPost
                 insertTextPre = insertTextPre[:-1]
+                needsDraw = true
             end if
         else if ch =="RightArrow" then
             if insertTextPost.len > 0 then
-                insertTextPre = insertTextPre + insertTextPos[0]
-                insertTextPost = insertTextPos[1:]
+                insertTextPre = insertTextPre + insertTextPost[0]
+                insertTextPost = insertTextPost[1:]
+                needsDraw = true
             end if
         else if ch == "Delete" then
             if insertTextPost.len > 0 then
                 insertTextPost = insertTextPost[1:]
+                needsDraw = true
             end if
         else if ch == "Backspace" then
             if insertTextPre.len > 0 then
                 insertTextPre = insertTextPre[:-1]
+                needsDraw = true
             end if
         else if ch == "End" then
             insertTextPre = insertTextPre + insertTextPost
             insertTextPost = ""
+            needsDraw = true
         else if ch == "Home" then
             insertTextPost = insertTextPre + insertTextPost
             insertTextPre = ""
         else if ch.len == 1 then
             // Needs length checking?
             insertTextPre = insertTextPre + ch
+            needsDraw = true
         end if
     end while
 

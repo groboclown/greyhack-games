@@ -115,7 +115,7 @@ OpV1_Div = function(machine, operands, storesVarRef, branch)
     v2 = machine.Signed16(operands[1].c)
     if v2 == 0 then exit("Attempted 'div' by zero")
     // Need to handle overflow nicely.
-    machine.SetVariableRef(storesVarRef, machine.Unsign16(v1 / v2))
+    machine.SetVariableRef(storesVarRef, machine.Unsign16(floor(v1 / v2)))
 end function
 Opcodes.div_v1 = @OpV1_Div
 
@@ -192,9 +192,16 @@ Opcodes.get_prop_addr_v1 = @OpV1_GetPropertyAddress
 OpV1_GetPropertyLength = function(machine, operands, storesVarRef, branch)
     if operands.len != 1 then exit("Invalid opcode 'get_prop_len': requires 1 argument")
     if storesVarRef == null then exit("Invalid opcode 'get_prop_len': requires storesVarRef")
-    // FIXME need to implement this.
+    propDataAddr = operands[0].c
+    propInfo = machine.GetPropertyInfoForDataAddress(propDataAddr)
+    if propInfo == null then
+        propLen = 0
+    else
+        propLen = propInfo[1]
+    end if
+    machine.SetVariableRef(storesVarRef, propLen)
 end function
-// Opcodes.get_prop_len_v1 = @OpV1_GetPropertyLength
+Opcodes.get_prop_len_v1 = @OpV1_GetPropertyLength
 
 // OpV1_GetSibling
 //      get_sibling object -> result (branch label)
@@ -282,13 +289,14 @@ OpV1_InsertObject = function(machine, operands, storesVarRef, branch)
             // Find what has obj as the sibling...
             while child != null
                 if child == null then exit("Invalid object tree: object's parent does not contain the object")
-                if machine.GetObjectId(child) == objId then
+                childSibling = machine.GetObjectSibling(child)
+                if machine.GetObjectId(childSibling) == objId then
                     // switch out the sibling to remove obj from the child chain.
                     OpCodeLogger.Trace("  .. it was the sibling of " + machine.GetObjectId(child))
                     machine.SetObjectSibling(child, objSiblingId)
                     break
                 end if
-                child = machine.GetObjectSibling(child)
+                child = childSibling
             end while
         end if
         // Skipping clearing out obj's sibling, because it will be set to the destination's
@@ -451,7 +459,6 @@ Opcodes.mul_v1 = @OpV1_Mul
 // Print carriage return.
 OpV1_NewLine = function(machine, operands, storesVarRef, branch)
     machine.PrintZscii(char(13))  // zscii newline
-    OpCodeLogger.Warn("Printing newline")
 end function
 Opcodes.new_line_v1 = @OpV1_NewLine
 
@@ -474,10 +481,22 @@ Opcodes.or_v1 = @OpV1_Or
 // Print the quoted (literal) Z-encoded string.
 OpV1_Print = function(machine, operands, storesVarRef, branch)
     text = machine.AdvanceToInstructionAfterString()
-    OpCodeLogger.Warn("Printing trailing text '" + text + "'")
     machine.PrintZscii(text)
 end function
 Opcodes.print_v1 = @OpV1_Print
+
+// OpV1_PrintAddr
+//     print byte-address
+// Print the z-encoded string at the byte address.
+OpV1_PrintAddr = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'print_paddr': requires 1 argument")
+    address = operands[0].c
+    OpCodeLogger.Trace("Printing @" + address)
+    text = machine.ReadString(address)
+    OpCodeLogger.Debug("Printing '" + text + "'")
+    machine.PrintZscii(text)
+end function
+Opcodes.print_addr_v1 = @OpV1_PrintAddr
 
 // OpV1_PrintChar
 //     print_char output-character-code
@@ -487,7 +506,7 @@ Opcodes.print_v1 = @OpV1_Print
 OpV1_PrintChar = function(machine, operands, storesVarRef, branch)
     if operands.len != 1 then exit("Invalid opcode 'print_char': requires 1 argument")
     v1 = char(operands[0].c)
-    OpCodeLogger.Warn("Printing char " + operands[0].c + " as '" + v1 + "'")
+    OpCodeLogger.Debug("Printing char " + operands[0].c + " as '" + v1 + "'")
     machine.PrintZscii(v1)
 end function
 Opcodes.print_char_v1 = @OpV1_PrintChar
@@ -498,7 +517,7 @@ Opcodes.print_char_v1 = @OpV1_PrintChar
 OpV1_PrintNum = function(machine, operands, storesVarRef, branch)
     if operands.len != 1 then exit("Invalid opcode 'print_num': requires 1 argument")
     v1 = machine.Signed16(operands[0].c)
-    OpCodeLogger.Warn("Printing number " + operands[0].c + " as '" + v1 + "'")
+    OpCodeLogger.Debug("Printing number " + operands[0].c + " as '" + v1 + "'")
     // assume zscii digits are 1-to-1 with unicode (they are)
     machine.PrintZscii(str(v1))
 end function
@@ -512,7 +531,7 @@ OpV1_PrintObject = function(machine, operands, storesVarRef, branch)
     objectId = operands[0].c
     object = machine.GetObjectData(objectId)
     name = machine.GetObjectName(object)
-    OpCodeLogger.Warn("Printing object " + objectId + ": '" + name + "'")
+    OpCodeLogger.Debug("Printing object " + objectId + ": '" + name + "'")
     machine.PrintZscii(name)
 end function
 Opcodes.print_obj_v1 = @OpV1_PrintObject
@@ -525,10 +544,81 @@ OpV1_PrintPAddr = function(machine, operands, storesVarRef, branch)
     address = machine.FromStringPackAddress(operands[0].c)
     OpCodeLogger.Trace("Printing @" + address)
     text = machine.ReadString(address)
-    OpCodeLogger.Warn("Printing '" + text + "'")
+    OpCodeLogger.Debug("Printing '" + text + "'")
     machine.PrintZscii(text)
 end function
 Opcodes.print_paddr_v1 = @OpV1_PrintPAddr
+
+// OpV1_PrintRet
+//     print_ret <literal-string>
+// Print the quoted (literal) Z-encoded string immediately following
+// the opcode, then print a new line, then return 1.
+OpV1_PrintRet = function(machine, operands, storesVarRef, branch)
+    text = machine.AdvanceToInstructionAfterString()
+    machine.PrintZscii(text + char(13))
+    machine.PopStackFrame(1)
+end function
+Opcodes.print_ret_v1 = @OpV1_PrintRet
+
+// OpV1_Push
+//     push value
+// Push the value onto the game stack.
+OpV1_Push = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'push': requires 1 argument")
+    value = operands[0].c
+    machine.SetVariableRef(0, value)  // setting variable 0 is equivalent to pushing to the stack.
+end function
+Opcodes.push_v1 = @OpV1_Push
+
+// OpV1_Pull
+//     pull variable
+// Pull a value off the stack and store it in the variable specified by the argument.
+// A stack underflow halts the interpreter.
+OpV1_Pull = function(machine, operands, storesVarRef, branch)
+    if operands.len != 1 then exit("Invalid opcode 'push': requires 1 argument")
+    varRef = operands[0].c
+    value = machine.GetVariableRef(0)  // getting variable 0 pulls off the stack.
+    if value == null then exit("Pull on an empty stack.")
+    machine.SetVariableRef(varRef, value)
+end function
+Opcodes.pull_v1 = @OpV1_Pull
+
+// OpV1_PutProperty
+//      put_prop object property value
+// Writes the given value to the given property of the given object. If the property
+// does not exist for that object, the interpreter should halt with a suitable error
+// message. If the property length is 1, then the interpreter should store only the least
+// significant byte of the value. (For instance, storing -1 into a 1-byte property results
+// in the property value 255.) As with get_prop the property length must not be more than 2:
+// if it is, the behaviour of the opcode is undefined.
+OpV1_PutProperty = function(machine, operands, storesVarRef, branch)
+    if operands.len != 3 then exit("Invalid opcode 'put_prop': requires 3 arguments")
+    object1 = machine.GetObjectData(operands[0].c)
+    propertyId = operands[1].c
+    value = operands[2].c
+    OpCodeLogger.Debug("Putting value " + value + " into property " + propertyId + " for object " + operands[0].c)
+    machine.SetObjectPropertyWord(object1, propertyId, value)
+end function
+Opcodes.put_prop_v1 = @OpV1_PutProperty
+
+// OpV1_Quit
+//     quit
+// Exits the game immediately.
+OpV1_Quit = function(machine, operands, storesVarRef, branch)
+    return false  // do not continue running
+end function
+Opcodes.quit_v1 = @OpV1_Quit
+
+// OpV1_Restart
+//     restart
+// Restarts the game immediately.
+// The only pieces of information surviving from the previous state are the
+// "transcribing to printer" bit (bit 0 of ’Flags 2′ in the header, at
+// address 0x10) and the "use fixed pitch font" bit (bit 1 of 'Flags 2').
+OpV1_Restart = function(machine, operands, storesVarRef, branch)
+    machine.StartGame()
+end function
+Opcodes.restart_v1 = @OpV1_Restart
 
 // OpV1_Ret
 //     ret value
