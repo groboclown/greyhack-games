@@ -1512,8 +1512,17 @@ end function
 // will create a save that can be later restored with that same name, without
 // asking the player.
 MachineState.SaveGame = function(region = null, suggestedName = null, prompt = null)
-    self.screen.PrintZscii("(save not implemented yet)" + char(13))
-    return false
+    if region != null then
+        self.screen.PrintZscii("(save not implemented yet)" + char(13))
+        return false
+    end if
+    data = {
+        "header": self.headerData,
+        "ext": self.headerExtensionData,
+        "stack": self.callStack,
+        "dyn": self.dynamicMemory,
+    }
+    return self.native.SaveGame(data)
 end function
 
 // RestoreGame Restore the state of the game.
@@ -1521,8 +1530,14 @@ end function
 // This must follow the semantics of Restore in terms of keeping some
 // header flags the same after a restore.
 MachineState.RestoreGame = function()
-    self.screen.PrintZscii("(restore not implemented yet)" + char(13))
-    return false
+    data = self.native.LoadGame()
+    if data == null then return false
+    self.headerData = data.header
+    self.headerExtensionData = data.ext
+    self.callStack = data.stack
+    self.dynamicMemory = data.dyn
+    // TODO Should have header flag 2 retained...
+    return true
 end function
 
 // ====================================================================

@@ -94,15 +94,43 @@ end function
 //
 // The native interface figures out the name of the save game (usually by asking the user).
 Native.SaveGame = function(data)
-    user_input("Save game not implemented yet.  Press <enter> to continue.")
+    name = user_input("Save game name (just 'enter' to cancel)> ")
+    if name == "" then return false
+    name = name.replace("/", "-")
+    save_dir = get_shell.host_computer.File(home_dir + "/.zmachine-saves")
+    if save_dir == null then
+        res = get_shell.host_computer.create_folder(home_dir, ".zmachine-saves")
+        if typeof(res) == "string" then
+            user_input("Failed creating save file (" + res + ").  Press <enter> to continue.")
+            return false
+        end if
+    end if
+    f = get_shell.host_computer.File(home_dir + "/.zmachine-saves/" + name)
+    if f == null then
+        res = get_shell.host_computer.touch(home_dir + "/.zmachine-saves", name)
+        if typeof(res) == "string" then
+            user_input("Failed creating save file (" + res + ").  Press <enter> to continue.")
+            return false
+        end if
+        f = get_shell.host_computer.File(home_dir + "/.zmachine-saves/" + name)
+    // else overwrite prompt?
+    end if
+    f.set_content(GameData.Archive(data))
 end function
 
 // LoadGame Loads a save file and returns a list of bytes (integers in range 0-255).
 //
 // On error or user canceling the action, returns null
 Native.LoadGame = function()
-    user_input("Load game not implemented yet.  Press <enter> to continue.")
-    return null
+    name = user_input("Load game name (just 'enter' to cancel)> ")
+    if name == "" then return null
+    name = name.replace("/", "-")
+    saved = get_shell.host_computer.File(home_dir + "/.zmachine-saves/" + name)
+    if saved == null then
+        user_input("Failed loading save file.  Press <enter> to continue.")
+        return null
+    end if
+    return GameData.Extract(saved.get_content)
 end function
 
 // EnableTranscript Trigger transcript saving, which can ask the user for input.
@@ -363,6 +391,60 @@ end function
 // In Versions 1 to 3, the status line is automatically redisplayed first.  The
 // caller this must ensure that's done.
 Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
+    return self.ReadLineSimple(maxChars, cursorColumn, cursorRow)
+
+    // This is closer to the real way to do it, but it's so slow.
+    //return self.ReadLineComplex(maxChars, cursorColumn, cursorRow)
+end function
+
+Native.ReadLineSimple = function(maxChars, cursorColumn, cursorRow)
+    if DISPLAY_DEBUGGING == 2 then print("$ReadLine(" + maxChars + ", " + cursorColumn +", " + cursorRow + ")")
+    clearScreen = DISPLAY_DEBUGGING == 0
+
+    display = [] + self.screenContents
+
+    // The cursor may be at any legal screen position.  If not
+    // legal, then this interpreter arbitrarily puts it in the bottom left side.
+    if cursorRow <= 0 or cursorRow >= display.len then
+        cursorRow = display.len - 1
+    end if
+    if cursorColumn <= 0 or cursorColumn >= self.ScreenWidth then
+        cursorColumn = 1
+    end if
+
+    // Optimizing the character read.  Rather than going through the draw again, do it
+    // with cached versions of the screen.  This needs to be very, very fast.
+    origCursorRow = self.screenContents[cursorRow] + "<pos=" + (cursorColumn * self.fontWidth) + "><color=" + self.inputColor + "><noparse>"
+    cursorFlavor = "</noparse><sprite index=0 color=" + self.cursorColor + "><noparse>"
+    display[cursorRow] = origCursorRow + cursorFlavor
+    if DISPLAY_DEBUGGING == 2 then
+        print("===== clear screen for input ====")
+        for row in display
+            print("$DISPLAY " + row.replace("<", "$"))
+        end for
+    else
+        // The clear_screen then one by one print causes a flashing
+        // on some screens.  Instead, just print it as a single print.
+        //if DISPLAY_DEBUGGING == 0 then clear_screen
+        //for row in display
+        //    print(row)
+        //end for
+        // NOTE: this will always clear screen because of the trailing "1"
+        print(display.join(char(10)), clearScreen)
+    end if
+
+    zscii = []
+    text = user_input("(input here) ")
+    for ch in text.values
+        if zscii.len >= maxChars then break
+        zsciiCh = self.convertInputToZscii(ch)
+        if zsciiCh > 0 then zscii.push(zsciiCh)
+    end for
+    self.cmdHistory.push(text)
+    return [true, zscii, text]
+end function
+
+Native.ReadLineComplex = function(maxChars, cursorColumn, cursorRow)
     // Should do a "inputStream" test.  But we don't.
     if DISPLAY_DEBUGGING == 2 then print("$ReadLine(" + maxChars + ", " + cursorColumn +", " + cursorRow + ")")
     clearScreen = DISPLAY_DEBUGGING == 0
@@ -400,6 +482,7 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
             zsciiCh = this.convertInputToZscii(ch)
             if zsciiCh > 0 then zscii.push(zsciiCh)
         end for
+        this.cmdHistory.push(text)
         return [isEol, zscii, text]
     end function
     leftArrowKey = function()
@@ -417,35 +500,29 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
         end if
     end function
     upArrowKey = function()
-        if outer.cmdHistoryPos >= 0 and outer.cmdHistoryPos < this.cmdHistory.len then
+        if outer.cmdHistoryPos > 0 and outer.cmdHistoryPos <= this.cmdHistory.len then
+            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
             outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
             outer.insertTextPost = ""
-            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
+            outer.needsDraw = true
             return
-        end if
-        if outer.insertTextPre != "" or outer.insertTextPost != "" then
-            this.cmdHistory.push(outer.insertTextPre + outer.insertTextPost)
-            outer.insertTextPre = ""
-            outer.insertTextPost = ""
         end if
     end function
     downArrowKey = function()
-        if outer.cmdHistoryPos == 0 and this.cmdHistory.len == 0 and outer.insertTextPre != "" or outer.insertTextPost != "" then
-            this.cmdHistory.push(outer.insertTextPre + outer.insertTextPost)
-            outer.insertTextPre = ""
-            outer.insertTextPost = ""
-            return
-        end if
-        if outer.cmdHistoryPos < 0 and this.cmdHistory.len > 0 then
-            outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
-            outer.insertTextPost = ""
-            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
-            return
-        end if
-        if outer.cmdHistoryPos < this.cmdHistory.len then
-            outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
-            outer.insertTextPost = ""
-            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
+        if this.cmdHistory.len > 0 then
+            if outer.cmdHistoryPos < 0 then
+                outer.cmdHistoryPos = 0
+                outer.insertTextPre = this.cmdHistory[0]
+                outer.insertTextPost = ""
+                outer.needsDraw = true
+                return
+            end if
+            if outer.cmdHistoryPos + 2 < this.cmdHistory.len then
+                outer.cmdHistoryPos = outer.cmdHistoryPos + 1
+                outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
+                outer.insertTextPost = ""
+                outer.needsDraw = true
+            end if
         end if
     end function
     deleteKey = function()
@@ -484,6 +561,7 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
     // Draw screen will show the cursor for us.
     // This needs to be really fast.  The longer this processes data,
     // the worse key input responsiveness is.
+    ch = ""
     while true
         // Draw the screen with the simulated cursor.
         // Because the cursor isn't flashing at the moment, just stick the whole post text after the cursor.
