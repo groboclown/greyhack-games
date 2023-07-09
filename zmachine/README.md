@@ -17,6 +17,15 @@ with open(source, "br") as inp:
 Or, you can use the fine [Grey Hack Importer](https://github.com/groboclown/greyhack-importer/) tool, which supports storing binary files as Ascii85 encoded files on the game computer.
 
 
+# Current Limitations
+
+It only has enough of the interpreter written to play up to version 3 story files.  This isn't many of the original Infocom games, but is a start.
+
+The Grey Hack game has file size limits which severely restricts the size of game you can play.  The interpreter allows for breaking up your game file into multiple parts and passing each one, in order, as the arguments.  This seems to have some issues, though.
+
+The save game / restore game isn't written right.  Restoring your game will put the came into a very strange state.
+
+
 # Notes on the License
 
 While the interpreter code is under the MIT license, like the rest of the project, the code contains heavy references and quotes from the Z-Machine specification.  That text is copyright 1993-2018 by the Interactive Fiction Technology Foundation, and licensed under the [Creative Commons Attribution-ShareAlike 4.0 International Public License](LICENSE-spec).

@@ -63,12 +63,21 @@ Screen.New = function(width, height)
     ret.StatusBackgroundColor = ret.DefaultForegroundColor
     ret.StatusForegroundColor = ret.DefaultBackgroundColor
 
+    ret.MoreCallback = function()
+        // eventually, this should be set by the native code.
+        user_input("[MORE]")
+    end function
+
     ret.Windows = [
         // Window ordering here doesn't necessarily match the opcode names.
         // Upper window
-        ScreenWindow.New(width, 0, ret.DefaultForegroundColor, ret.DefaultBackgroundColor, ret.ColorSpace24, ret.ColorSpace15),
+        ScreenWindow.New(
+            width, 0, ret.DefaultForegroundColor, ret.DefaultBackgroundColor, ret.ColorSpace24, ret.ColorSpace15,
+            ret.MoreCallback),
         // Lower window
-        ScreenWindow.New(width, height, ret.DefaultForegroundColor, ret.DefaultBackgroundColor, ret.ColorSpace24, ret.ColorSpace15),
+        ScreenWindow.New(
+            width, height, ret.DefaultForegroundColor, ret.DefaultBackgroundColor, ret.ColorSpace24, ret.ColorSpace15,
+            ret.MoreCallback),
     ]
     ret.ActiveWindowIndex = 1
     // In all versions, the lower window always buffers text by default.
@@ -93,8 +102,11 @@ Screen.Reset = function()
     self.StatusForegroundColor = self.DefaultBackgroundColor
 
     self.Windows = [
-        ScreenWindow.New(self.Width, 0, self.DefaultForegroundColor, self.DefaultBackgroundColor, self.ColorSpace24, self.ColorSpace15),
-        ScreenWindow.New(self.Width, self.Height, self.DefaultForegroundColor, self.DefaultBackgroundColor, self.ColorSpace24, self.ColorSpace15),
+        ScreenWindow.New(
+            self.Width, 0, self.DefaultForegroundColor, self.DefaultBackgroundColor, self.ColorSpace24, self.ColorSpace15,
+            self.MoreCallback),
+        ScreenWindow.New(self.Width, self.Height, self.DefaultForegroundColor, self.DefaultBackgroundColor, self.ColorSpace24, self.ColorSpace15,
+            self.MoreCallback),
     ]
     self.ActiveWindowIndex = 1
     self.Windows[1].IsBufferingText = true
@@ -177,6 +189,9 @@ Screen.SetStatusLine = function(objectName, scoreHour, turnMinute)
     self.StatusLineObjectName = objectName
     self.StatusLineScore = scoreHour
     self.StatusLineTurn = turnMinute
+    for window in self.Windows
+        window.LineCount = 0
+    end for
 end function
 
 // GetActiveCursor Get the cursor [x, y] for the active window
@@ -209,6 +224,9 @@ Screen.PrintZscii = function(text)
 end function
 
 Screen.AddUserInput = function(originalText, includeNewline)
+    for window in self.Windows
+        window.LineCount = 0
+    end for
     self.Windows[self.ActiveWindowIndex].AddUserInput(originalText, includeNewline)
 end function
 
@@ -228,7 +246,7 @@ end function
 
 // ScreenWindow A window to display within the screen.
 ScreenWindow = {}
-ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, colorSpace24, colorSpace15)
+ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, colorSpace24, colorSpace15, moreCallback)
     ret = new ScreenWindow()
     ret.Width = width
     ret.Height = height
@@ -236,6 +254,7 @@ ScreenWindow.New = function(width, height, foregroundIndex, backgroundIndex, col
         // 10: actual style combination in use
         // 11: current color index
     }
+    ret.MoreCallback = moreCallback
 
     ret.BackgroundColor = backgroundIndex
     ret.BackgroundColor24 = colorSpace24[backgroundIndex]
@@ -452,11 +471,9 @@ end function
 // Called on moving down a Y.
 ScreenWindow.addNewline = function()
     self.LineCount = self.LineCount + 1
-    if self.LineCount + 1 >= self.Height and self.ScrollsUp then
-        // FIXME should wait for a "more" screen, but that requires
-        // calling native.
-        // Then, after the more,
-        // self.LineCount = 0
+    if self.Height > 0 and self.LineCount + 1 >= self.Height and self.ScrollsUp then
+        self.MoreCallback()
+        self.LineCount = 0
     end if
     if self.CursorY + 1 >= self.StoredLines then
         if not self.ScrollsUp then return true  // can't scroll text up, so exit immediately.

@@ -1,4 +1,6 @@
 // Native interactions.
+MIN_FRAME_WAIT = 0.21
+MIN_FRAME_REFRESH_TIME = 0.5
 
 Native = {}
 
@@ -50,6 +52,13 @@ Native.New = function(width, height)
     ret.zsciiSpecialUnicode = {}
     ret.unicodeFromZscii = {}
 
+    // History of past input captures for history scrolling
+    ret.cmdHistory = []
+
+    // Time of the last draw.  Used to ensure waiting between redraw
+    // to reduce flashing.
+    ret.lastDraw = time()
+
     // Base font size.
     ret.fontWidth = 10
 
@@ -85,15 +94,43 @@ end function
 //
 // The native interface figures out the name of the save game (usually by asking the user).
 Native.SaveGame = function(data)
-    user_input("Save game not implemented yet.  Press <enter> to continue.")
+    name = user_input("Save game name (just 'enter' to cancel)> ")
+    if name == "" then return false
+    name = name.replace("/", "-")
+    save_dir = get_shell.host_computer.File(home_dir + "/.zmachine-saves")
+    if save_dir == null then
+        res = get_shell.host_computer.create_folder(home_dir, ".zmachine-saves")
+        if typeof(res) == "string" then
+            user_input("Failed creating save file (" + res + ").  Press <enter> to continue.")
+            return false
+        end if
+    end if
+    f = get_shell.host_computer.File(home_dir + "/.zmachine-saves/" + name)
+    if f == null then
+        res = get_shell.host_computer.touch(home_dir + "/.zmachine-saves", name)
+        if typeof(res) == "string" then
+            user_input("Failed creating save file (" + res + ").  Press <enter> to continue.")
+            return false
+        end if
+        f = get_shell.host_computer.File(home_dir + "/.zmachine-saves/" + name)
+    // else overwrite prompt?
+    end if
+    f.set_content(GameData.Archive(data))
 end function
 
 // LoadGame Loads a save file and returns a list of bytes (integers in range 0-255).
 //
 // On error or user canceling the action, returns null
 Native.LoadGame = function()
-    user_input("Load game not implemented yet.  Press <enter> to continue.")
-    return null
+    name = user_input("Load game name (just 'enter' to cancel)> ")
+    if name == "" then return null
+    name = name.replace("/", "-")
+    saved = get_shell.host_computer.File(home_dir + "/.zmachine-saves/" + name)
+    if saved == null then
+        user_input("Failed loading save file.  Press <enter> to continue.")
+        return null
+    end if
+    return GameData.Extract(saved.get_content)
 end function
 
 // EnableTranscript Trigger transcript saving, which can ask the user for input.
@@ -275,10 +312,18 @@ Native.drawCurrentScreen = function()
             lines.push(out)
         end if
     end for
+    currentTime = time()
+    under = MIN_FRAME_REFRESH_TIME - (currentTime - self.lastDraw)
+    clear = DISPLAY_DEBUGGING == 0
+    if under > 0 and clear then
+        // waiting allow the print with clear-screen to properly clear the screen.
+        // wait(MIN_FRAME_WAIT)
+        clear_screen
+        clear = false
+    end if
+    self.lastDraw = time()
     // So much faster to redraw the screen in a single call.
-    // print(lines.join(char(10)), DISPLAY_DEBUGGING == 0)
-    if DISPLAY_DEBUGGING == 0 then clear_screen
-    print(lines.join(char(10)))
+    print(lines.join(char(10)), clear)
 end function
 
 // SetTerminatingChars Set a list of characters that terminate input.
@@ -346,6 +391,60 @@ end function
 // In Versions 1 to 3, the status line is automatically redisplayed first.  The
 // caller this must ensure that's done.
 Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
+    return self.ReadLineSimple(maxChars, cursorColumn, cursorRow)
+
+    // This is closer to the real way to do it, but it's so slow.
+    //return self.ReadLineComplex(maxChars, cursorColumn, cursorRow)
+end function
+
+Native.ReadLineSimple = function(maxChars, cursorColumn, cursorRow)
+    if DISPLAY_DEBUGGING == 2 then print("$ReadLine(" + maxChars + ", " + cursorColumn +", " + cursorRow + ")")
+    clearScreen = DISPLAY_DEBUGGING == 0
+
+    display = [] + self.screenContents
+
+    // The cursor may be at any legal screen position.  If not
+    // legal, then this interpreter arbitrarily puts it in the bottom left side.
+    if cursorRow <= 0 or cursorRow >= display.len then
+        cursorRow = display.len - 1
+    end if
+    if cursorColumn <= 0 or cursorColumn >= self.ScreenWidth then
+        cursorColumn = 1
+    end if
+
+    // Optimizing the character read.  Rather than going through the draw again, do it
+    // with cached versions of the screen.  This needs to be very, very fast.
+    origCursorRow = self.screenContents[cursorRow] + "<pos=" + (cursorColumn * self.fontWidth) + "><color=" + self.inputColor + "><noparse>"
+    cursorFlavor = "</noparse><sprite index=0 color=" + self.cursorColor + "><noparse>"
+    display[cursorRow] = origCursorRow + cursorFlavor
+    if DISPLAY_DEBUGGING == 2 then
+        print("===== clear screen for input ====")
+        for row in display
+            print("$DISPLAY " + row.replace("<", "$"))
+        end for
+    else
+        // The clear_screen then one by one print causes a flashing
+        // on some screens.  Instead, just print it as a single print.
+        //if DISPLAY_DEBUGGING == 0 then clear_screen
+        //for row in display
+        //    print(row)
+        //end for
+        // NOTE: this will always clear screen because of the trailing "1"
+        print(display.join(char(10)), clearScreen)
+    end if
+
+    zscii = []
+    text = user_input("(input here) ")
+    for ch in text.values
+        if zscii.len >= maxChars then break
+        zsciiCh = self.convertInputToZscii(ch)
+        if zsciiCh > 0 then zscii.push(zsciiCh)
+    end for
+    self.cmdHistory.push(text)
+    return [true, zscii, text]
+end function
+
+Native.ReadLineComplex = function(maxChars, cursorColumn, cursorRow)
     // Should do a "inputStream" test.  But we don't.
     if DISPLAY_DEBUGGING == 2 then print("$ReadLine(" + maxChars + ", " + cursorColumn +", " + cursorRow + ")")
     clearScreen = DISPLAY_DEBUGGING == 0
@@ -371,6 +470,8 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
     insertPos = 0
     insertTextPre = ""
     insertTextPost = ""
+    needsDraw = true
+    cmdHistoryPos = self.cmdHistory.len
     this = self  // needed for inner-function access to self
 
     mkRet = function(isEol)
@@ -381,11 +482,86 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
             zsciiCh = this.convertInputToZscii(ch)
             if zsciiCh > 0 then zscii.push(zsciiCh)
         end for
+        this.cmdHistory.push(text)
         return [isEol, zscii, text]
     end function
+    leftArrowKey = function()
+        if outer.insertTextPre.len > 0 then
+            outer.insertTextPost = outer.insertTextPre[-1] + outer.insertTextPost
+            outer.insertTextPre = outer.insertTextPre[:-1]
+            outer.needsDraw = true
+        end if
+    end function
+    rightArrowKey = function()
+        if outer.insertTextPost.len > 0 then
+            outer.insertTextPre = outer.insertTextPre + outer.insertTextPost[0]
+            outer.insertTextPost = outer.insertTextPost[1:]
+            outer.needsDraw = true
+        end if
+    end function
+    upArrowKey = function()
+        if outer.cmdHistoryPos > 0 and outer.cmdHistoryPos <= this.cmdHistory.len then
+            outer.cmdHistoryPos = outer.cmdHistoryPos - 1
+            outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
+            outer.insertTextPost = ""
+            outer.needsDraw = true
+            return
+        end if
+    end function
+    downArrowKey = function()
+        if this.cmdHistory.len > 0 then
+            if outer.cmdHistoryPos < 0 then
+                outer.cmdHistoryPos = 0
+                outer.insertTextPre = this.cmdHistory[0]
+                outer.insertTextPost = ""
+                outer.needsDraw = true
+                return
+            end if
+            if outer.cmdHistoryPos + 2 < this.cmdHistory.len then
+                outer.cmdHistoryPos = outer.cmdHistoryPos + 1
+                outer.insertTextPre = this.cmdHistory[outer.cmdHistoryPos]
+                outer.insertTextPost = ""
+                outer.needsDraw = true
+            end if
+        end if
+    end function
+    deleteKey = function()
+        if outer.insertTextPost.len > 0 then
+            outer.insertTextPost = outer.insertTextPost[1:]
+            outer.needsDraw = true
+        end if
+    end function
+    backspaceKey = function()
+        if outer.insertTextPre.len > 0 then
+            outer.insertTextPre = outer.insertTextPre[:-1]
+            outer.needsDraw = true
+        end if
+    end function
+    endKey = function()
+        outer.insertTextPre = outer.insertTextPre + outer.insertTextPost
+        outer.insertTextPost = ""
+        outer.needsDraw = true
+    end function
+    homeKey = function()
+        outer.insertTextPost = outer.insertTextPre + outer.insertTextPost
+        outer.insertTextPre = ""
+    end function
+
+    keyFuncs = {
+        "LeftArrow": @leftArrowKey,
+        "RightArrow": @rightArrowKey,
+        "UpArrow": @upArrowKey,
+        "DownArrow": @downArrowKey,
+        "Delete": @deleteKey,
+        "Backspace": @backspaceKey,
+        "End": @endKey,
+        "Home": @homeKey,
+    }
 
     // Draw screen will show the cursor for us.
-    needsDraw = true
+    // This needs to be really fast.  The longer this processes data,
+    // the worse key input responsiveness is.
+    ch = ""
     while true
         // Draw the screen with the simulated cursor.
         // Because the cursor isn't flashing at the moment, just stick the whole post text after the cursor.
@@ -411,7 +587,8 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
         // Read the character without showing an explicit prompt.
         // Need to put something in the prompt text, or it will return all the
         // line's text, what's been printed + the typed character.
-        ch = user_input(" ", false, true)
+        // But... we can also add formatting to make the cursor disappear.
+        ch = user_input("<color=#000000><mark=#000000>", false, true)
         if DISPLAY_DEBUGGING == 2 then print("$INPUT '" + ch + "'")
         if ch == "" then return mkRet(true)  // Explicit check for CR
         if self.terminatingChars.indexOf(ch) != null then return mkRet(false)
@@ -420,35 +597,8 @@ Native.ReadLine = function(maxChars, cursorColumn, cursorRow)
         // Note: The key press handling won't work here with v5 and extra
         // existing character buffer.  Or does it work right?
         needsDraw = false
-        if ch == "LeftArrow" then
-            if insertTextPre.len > 0 then
-                insertTextPost = insertTextPre[-1] + insertTextPost
-                insertTextPre = insertTextPre[:-1]
-                needsDraw = true
-            end if
-        else if ch =="RightArrow" then
-            if insertTextPost.len > 0 then
-                insertTextPre = insertTextPre + insertTextPost[0]
-                insertTextPost = insertTextPost[1:]
-                needsDraw = true
-            end if
-        else if ch == "Delete" then
-            if insertTextPost.len > 0 then
-                insertTextPost = insertTextPost[1:]
-                needsDraw = true
-            end if
-        else if ch == "Backspace" then
-            if insertTextPre.len > 0 then
-                insertTextPre = insertTextPre[:-1]
-                needsDraw = true
-            end if
-        else if ch == "End" then
-            insertTextPre = insertTextPre + insertTextPost
-            insertTextPost = ""
-            needsDraw = true
-        else if ch == "Home" then
-            insertTextPost = insertTextPre + insertTextPost
-            insertTextPre = ""
+        if keyFuncs.hasIndex(ch) then
+            keyFuncs[ch]()
         else if ch.len == 1 then
             // Needs length checking?
             insertTextPre = insertTextPre + ch
