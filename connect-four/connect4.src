@@ -1,0 +1,598 @@
+chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+game_shell = null
+GetGameShell = function()
+	myproxy = ["123.123.123.123", 22, "root", "proxypasswordhere", "ssh"]
+    // ^^ this must be filled with proxy ssh credentials.
+	globals.game_shell = get_shell.connect_service(myproxy[0], myproxy[1], myproxy[2], myproxy[3], myproxy[4])
+end function
+
+// Define the size of the game board
+ROWS = 6
+COLS = 7
+
+// Define the player symbols
+PLAYER_ONE = "<mark=#FF0000>X</mark>" // red
+PLAYER_TWO = "<mark=#FFD700>O</mark>" // yellow
+
+// Create an empty game board
+CreateBoard = function()
+	globals.board = []
+	for r in range(1,ROWS)
+    	row = []
+    	for c in range(1,COLS)
+       		row.push(" ")
+    	end for
+    	globals.board.push(row)
+	end for
+end function
+
+// Print the current state of the game board
+print_board = function()
+	clear_screen
+	print("")
+	help_line = "<indent=5%><size=20>  "
+	small = " "
+	large = "  "
+	i = 1
+	stopme = false
+    for row in board
+        row_output = "<indent=5%><size=20>"
+		line_seperator = "<indent=5%><size=20> +"
+        for cell in row
+            row_output = row_output + " | " + cell
+			line_seperator = line_seperator + "---+"
+			if not stopme then
+				if i < 10 then
+					help_line = help_line + " " + i + large
+				else
+					help_line = help_line + " " + i + small
+				end if
+				i = i + 1
+			end if
+        end for
+        stopme = true
+		print(row_output + " |")
+		print(line_seperator)
+    end for
+	print(help_line)
+end function
+
+// Check if a player has won the game, 'player' is last player's coin (X or O)
+check_winner = function(player)
+
+    // Check for horizontal win
+	for row in range(0, ROWS - 1)
+		for col in range(0, COLS - 4)
+			if board[row][col] == player then
+				if board[row][col+1] == player and
+					board[row][col+2] == player and
+					board[row][col+3] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+	
+	// Check for vertical win
+	for row in range(0, ROWS - 4)
+		for col in range(0, COLS - 1)
+			if board[row][col] == player then
+				if board[row+1][col] == player and
+					board[row+2][col] == player and
+					board[row+3][col] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+
+	// Check for diagonal win (top-left to bottom-right)
+	for row in range(0, ROWS - 4)
+		for col in range(0, COLS - 4)
+			if board[row][col] == player then
+				if board[row+1][col+1] == player and
+					board[row+2][col+2] == player and
+					board[row+3][col+3] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+
+	// Check for diagonal win (bottom-left to top-right)
+	for row in range(2, ROWS - 1)
+		for col in range(0, COLS - 4)
+			if board[row][col] == player then
+				if board[row-1][col+1] == player and
+					board[row-2][col+2] == player and
+					board[row-3][col+3] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+	return false
+end function
+
+
+
+Header = function()
+	clear_screen
+	print(char(10)+char(10)+"<size=60><color=red>    CONNECT <color=yellow>4")
+	print("<color=#A0A0A0>                                  made by <color=#FFFFFF>marko")
+	print(char(10)+char(10) + "             <color=#D2B48C><b>MAIN MENU" + char(10))
+	print("             1  -  Single player")
+	print("             2  -  Multiplayer")
+	print("             3  -  Information")
+	print("             4  -  Exit" + char(10))
+end function
+
+SP_Header = function()
+	clear_screen
+	print(char(10)+char(10) + "             <color=#D2B48C><b>SINGLE PLAYER" + char(10))
+	print("             1  -  Player vs Computer <color=red>>>> NOT WORKING <<<")
+	print("             2  -  2 players on one computer")
+	print("             3  -  Return" + char(10))
+end function
+
+MP_Header = function()
+	clear_screen
+	print(char(10)+char(10) + "             <color=#D2B48C><b>MULTIPLAYER" + char(10))
+	print("             1  -  Host game")
+	print("             2  -  Join game")
+	print("             3  -  Return" + char(10))
+end function
+
+Header
+
+while true
+	inputOk = false
+	menu_choice = user_input("             Choice: ").to_int
+	if typeof(menu_choice) != "number" or menu_choice > 4 or menu_choice < 1 then
+		print("             Invalid choice!")
+	else
+		inputOk = true
+	end if
+	if inputOk then
+		if menu_choice == 1 then
+			SP_Header
+			while true
+				inputSP = false
+				sp_choice = user_input("             Choice: ").to_int
+				if typeof(sp_choice) != "number" or sp_choice > 3 or sp_choice < 1 then
+					print("             Invalid choice!")
+				else
+					inputSP = true
+				end if
+				if inputSP then
+					if sp_choice == 1 then
+						print("<color=red>>>> NOT WORKING <<<")
+					else if sp_choice == 2 then
+						CreateBoard
+						// Initialize the current player
+						current_player = PLAYER_ONE
+						// Warnings
+						warn_incorrect = false
+						warn_full = false
+						
+						
+						// Play the game
+						while true
+    						print_board()
+    
+   							// Ask the current player to make a move
+							if warn_incorrect then
+								print(char(10) + "Invalid move, try again.")
+								warn_incorrect= false
+							end if
+							if warn_full then
+								print(char(10) + "Column is full, try again")
+								warn_full = false
+							end if
+    						moveit = user_input(char(10) + "<indent=5%><size=20>" + current_player + "  enter a column number (1-" + COLS + "): ").to_int
+    
+    						// Check if the move is valid
+    						if typeof(moveit) != "number" or (moveit - 1) < 0 or (moveit - 1) >= COLS then
+       							warn_incorrect= true
+        						continue
+    						end if
+    						col = moveit - 1
+    
+    						// Find the lowest empty row in the selected column
+    						row = null
+    						for i in range(ROWS- 1 , 0)
+        						if board[i][col] == " " then
+            						row = i
+            						break
+        						end if
+    						end for
+    
+    						if row == null then
+        						warn_full = true
+        						continue
+    						end if
+	
+    						// Place the player's symbol in the selected row and column
+    						board[row][col] = current_player
+    
+							is_board_full = true
+							for i in range(0, ROWS - 1)
+								for j in range(0, COLS - 1)
+									if board[i][j] == " " then
+										is_board_full = false
+										break
+									end if
+								end for
+							end for
+	
+    						// Check if the game is over
+    						if check_winner(current_player) then
+        						print_board()
+        						print(char(10) + "<b><indent=5%><size=20>GAME OVER! Player with </b>" + current_player + "  wins!")
+								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								SP_Header
+								break
+    						else if is_board_full then
+								print_board()
+        						print(char(10) + "<indent=5%><size=20>Tie game!")
+								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								SP_Header
+								break
+    						end if
+    						// Switch to the other player
+
+							if current_player == PLAYER_ONE then
+								current_player = PLAYER_TWO
+							else
+								current_player = PLAYER_ONE
+							end if
+						end while
+					else
+						Header
+						break
+					end if
+				end if
+			end while
+		else if menu_choice == 2 then
+			MP_Header
+			while true
+				inputMP = false
+				mp_choice = user_input("             Choice: ").to_int
+				if typeof(mp_choice) != "number" or mp_choice > 3 or mp_choice < 1 then
+					print("             Invalid choice!")
+				else
+					inputMP = true
+				end if
+				if inputMP then
+					if mp_choice == 1 then
+						clear_screen
+						if not game_shell then GetGameShell
+						games = game_shell.host_computer.File("/Games")
+						if not games then
+							out = game_shell.host_computer.create_folder("/", "Games")
+							if typeof(out) == "string" then
+								print("<indent=5%>Error: " + out)
+								MP_Header
+								break
+							end if
+							gamems = game_shell.host_computer.File("/Games")
+							if not games then
+								print("<indent=5%>Error: Folder /Games not found on game server")
+								MP_Header
+								break
+							end if
+						end if
+						thisgame = game_shell.host_computer.File("/Games/Connect4")
+						if not thisgame then
+							out2 = game_shell.host_computer.create_folder("/Games", "Connect4")
+							if typeof(out2) == "string" then
+								print("<indent=5%>Error: " + out2)
+								MP_Header
+								break
+							end if
+							thisgame = game_shell.host_computer.File("/Games/Connect4")
+							if not thisgame then
+								print("<indent=5%>Error: Folder /Games/Connect4 not found on game server")
+								MP_Header
+								break
+							end if
+						end if
+						while true
+							exists = false
+							newfile = ""
+							for _ in range(1,5)
+								x = round(rnd * 9)
+								newfile = newfile + x
+							end for
+							if thisgame.get_files.len == 0 then break
+							for file in thisgame.get_files
+								if file.name == newfile then exists = true
+							end for
+							if exists == false then break
+						end while
+						out3 = game_shell.host_computer.touch("/Games/Connect4", newfile)
+						if typeof(out3) == "string" then
+							print("error: " + out3)
+							MP_Header
+							break
+						end if
+						print(char(10) + char(10) + "             Your game ID:  <size=30><color=white>"+newfile)
+						while true
+							nameOK = true
+							myname = user_input(char(10) + "             Enter your name: " )
+							for c in myname
+								if chars.indexOf(c) == null then nameOK = false
+							end for
+							if nameOK == false then
+								print("             Please use only alphanumeric characters in name")
+							else
+								break
+							end if
+						end while
+						thisgame = game_shell.host_computer.File("/Games/Connect4/" + newfile)
+						thisgame.set_content(myname + " -- PLAYER_ONE")
+
+						print(char(10) + "             Waiting oponent to join match...")
+						print(char(10) + "             (timeout after 30 seconds)")
+						timewait = 0
+						while thisgame.get_content.split(char(10)).len != 2
+							if thisgame.get_content.split(char(10)).len == 2 then break
+							if timewait == 30 then
+								print(char(10) + "             TIMEOUT! Oponent not connected!")
+								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								break
+							end if
+							wait(1)
+							timewait = timewait + 1
+						end while
+						print(char(10) + "             Starting game...")
+						wait(2)
+						
+						CreateBoard
+						// Initialize the current player
+						current_player = PLAYER_ONE
+						
+						// Setting the player names
+						player_one_name = myname
+						player_two_name = thisgame.get_content.split(char(10))[1].split(" -- ")[0]
+						current_player_name = myname
+						
+						// Setting other variables
+						lastlength = thisgame.get_content.split(char(10)).len
+						
+						// Warnings
+						warn_incorrect = false
+						warn_full = false
+						
+						// Play the game
+						while true
+							print_board()
+							// Ask the current player to make a move
+							if warn_incorrect then
+								print(char(10) + "Invalid move, try again.")
+								warn_incorrect= false
+							end if
+							if warn_full then
+								print(char(10) + "Column is full, try again")
+								warn_full = false
+							end if
+							
+							if current_player == PLAYER_ONE then
+								moveit = user_input(char(10) + "<indent=5%>Player " + player_one_name + "  (" + current_player + ")  enter a column number (1-" + COLS + "): ").to_int
+								// Check if the move is valid
+								if typeof(moveit) != "number" or (moveit - 1) < 0 or (moveit - 1) >= COLS then
+       								warn_incorrect= true
+        							continue
+    							end if
+								col = moveit - 1
+								thisgame.set_content(thisgame.get_content + char(10) + myname + " -- " + moveit)
+							else
+								print(char(10) + "<indent=5%>Waiting for " + player_two_name + "  (" + PLAYER_TWO + ")  to make a move...")
+								while true
+									if thisgame.get_content.split(char(10)).len > lastlength then break
+								end while
+								moveit = thisgame.get_content.split(char(10))[-1].split(" -- ")[1].to_int
+								col = moveit - 1
+							end if
+							
+    						// Find the lowest empty row in the selected column
+    						row = null
+    						for i in range(ROWS- 1 , 0)
+        						if board[i][col] == " " then
+            						row = i
+            						break
+        						end if
+    						end for
+    
+    						if row == null then
+        						warn_full = true
+        						continue
+    						end if
+							
+							lastlength = thisgame.get_content.split(char(10)).len
+							
+							// Place the player's symbol in the selected row and column
+    						board[row][col] = current_player
+							is_board_full = true
+							for i in range(0, ROWS - 1)
+								for j in range(0, COLS - 1)
+									if board[i][j] == " " then
+										is_board_full = false
+										break
+									end if
+								end for
+							end for
+							
+							// Check if the game is over
+    						if check_winner(current_player) then
+        						print_board()
+								last_player = thisgame.get_content.split(char(10))[-1].split(" -- ")[0]
+        						print(char(10) + "<b><indent=5%><size=20>GAME OVER! Player " + last_player + " with </b>" + current_player + "  <b>wins!")
+								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								break
+    						else if is_board_full then
+								print_board()
+        						print(char(10) + "<indent=5%><size=20>Tie game!")
+								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								break
+    						end if
+    						
+							// Switch to the other player
+							if current_player == PLAYER_ONE then
+								current_player = PLAYER_TWO
+							else
+								current_player = PLAYER_ONE
+							end if							
+						end while
+						
+						clear_screen
+						MP_Header
+					else if mp_choice == 2 then
+						clear_screen
+						if not game_shell then GetGameShell
+						print(char(10))
+						while true
+							gameid = user_input("             Enter game ID number: <color=white>" )
+							thisgame = game_shell.host_computer.File("/Games/Connect4/" + gameid)
+							if not thisgame then
+								print("             Error: wrong game ID")
+							else
+								break
+							end if
+						end while
+						while true
+							nameOK = true
+							myname = user_input(char(10) + "             Enter your name: " )
+							for c in myname
+								if chars.indexOf(c) == null then nameOK = false
+							end for
+							if nameOK == false then
+								print("             Please use only alphanumeric characters in name")
+							else
+								break
+							end if
+						end while
+						thisgame.set_content(thisgame.get_content + char(10) + myname + " -- PLAYER_TWO")
+						print(char(10) + "             Starting game...")
+						wait(3)
+						
+						CreateBoard
+						// Initialize the current player
+						current_player = PLAYER_ONE
+						
+						// Setting the player names
+						player_one_name = thisgame.get_content.split(char(10))[0].split(" -- ")[0]
+						player_two_name = myname
+						current_player_name = player_one_name
+						
+						// Setting other variables
+						lastlength = thisgame.get_content.split(char(10)).len
+						
+						// Warnings
+						warn_incorrect = false
+						warn_full = false
+						
+						// Play the game
+						while true
+							print_board()
+							// Ask the current player to make a move
+							if warn_incorrect then
+								print(char(10) + "Invalid move, try again.")
+								warn_incorrect= false
+							end if
+							if warn_full then
+								print(char(10) + "Column is full, try again")
+								warn_full = false
+							end if
+							if current_player == PLAYER_ONE then
+								print(char(10) + "<indent=5%>Waiting for " + player_one_name + "  (" + PLAYER_ONE + ")  to make a move...")
+								while true
+									if thisgame.get_content.split(char(10)).len > lastlength then break
+								end while
+								moveit = thisgame.get_content.split(char(10))[-1].split(" -- ")[1].to_int
+								col = moveit - 1
+							else
+								moveit = user_input(char(10) + "<indent=5%>Player " + player_two_name + "  (" + current_player + ")  enter a column number (1-" + COLS + "): ").to_int
+								// Check if the move is valid
+								if typeof(moveit) != "number" or (moveit - 1) < 0 or (moveit - 1) >= COLS then
+       								warn_incorrect= true
+        							continue
+    							end if
+								col = moveit - 1
+								thisgame.set_content(thisgame.get_content + char(10) + myname + " -- " + moveit)
+							end if
+							
+							lastlength = thisgame.get_content.split(char(10)).len
+							
+    						// Find the lowest empty row in the selected column
+    						row = null
+    						for i in range(ROWS- 1 , 0)
+        						if board[i][col] == " " then
+            						row = i
+            						break
+        						end if
+    						end for
+    
+    						if row == null then
+        						warn_full = true
+        						continue
+    						end if
+							
+							// Place the player's symbol in the selected row and column
+    						board[row][col] = current_player
+							is_board_full = true
+							for i in range(0, ROWS - 1)
+								for j in range(0, COLS - 1)
+									if board[i][j] == " " then
+										is_board_full = false
+										break
+									end if
+								end for
+							end for
+						
+							// Check if the game is over
+    						if check_winner(current_player) then
+        						print_board()
+								last_player = thisgame.get_content.split(char(10))[-1].split(" -- ")[0]
+        						print(char(10) + "<b><indent=5%><size=20>GAME OVER! Player " + last_player + " with </b>" + current_player + "  <b>wins!")
+								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								break
+    						else if is_board_full then
+								print_board()
+        						print(char(10) + "<indent=5%><size=20>Tie game!")
+								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								break
+    						end if
+						
+							// Switch to the other player
+							if current_player == PLAYER_ONE then
+								current_player = PLAYER_TWO
+							else
+								current_player = PLAYER_ONE
+							end if	
+						end while
+						clear_screen
+						MP_Header
+					else
+						Header
+						break
+					end if
+				end if
+			end while
+		else if menu_choice == 3 then
+			clear_screen
+			print(char(10)+char(10) + "             <color=#D2B48C><b>INFORMATION" + char(10))
+			print("<indent=5%>The objective of the game is for a player to be the first to form a straight line of 4 tokens of their own color.")
+			print("<indent=5%>The four tokens can be connected vertically, horizontally or diagonally." + char(10))
+			print("<indent=5%>When arranging a multiplayer game, it's necessary to exchange game ID number forthe game to start. One player 'hosts' the game, the other one joins with the provided game ID number.")
+			print("<indent=5%>When a multiplayer game is hosted, the second player has 30 seconds to connect or there will be a timeout. In multiplayer, the hosting player always starts first." + char(10) + char(10))
+			user_input("<indent=5%>Press enter to continue...")
+			Header
+		else
+			exit(char(10) + "             Thank you for playing!" + char(10))
+		end if
+		
+	end if
+	
+end while
