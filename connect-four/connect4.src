@@ -1,10 +1,40 @@
 chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+myproxy = ["123.123.123.123", 22, "root", "proxypasswordhere", "ssh"]
+
+for param in params
+	if param == "--help" or param == "-h" then
+		print("Connect 4 Game.")
+		print("Usage: " + program_path + " [--ip=server-ip] [--port=server-port] [--user=server-user] [--passwd=server-password] [--service=server-service]")
+		exit
+	end if
+	if param[:5] == "--ip=" then
+		myproxy[0] = param[5:]
+	else if param[:7] == "--port=" then
+		myproxy[1] = floor(param[7:].val)
+	else if param[:7] == "--user=" then
+		myproxy[2] = param[7:]
+	else if param[:9] == "--passwd=" then
+		myproxy[3] = param[9:]
+	else if param[:10] == "--service=" then
+		myproxy[4] = param[10:]
+	else
+		exit("Unknown parameter '" + param + "'; use --help for help.")
+	end if
+end for
+
 game_shell = null
+
 GetGameShell = function()
-	myproxy = ["123.123.123.123", 22, "root", "proxypasswordhere", "ssh"]
-    // ^^ this must be filled with proxy ssh credentials.
 	globals.game_shell = get_shell.connect_service(myproxy[0], myproxy[1], myproxy[2], myproxy[3], myproxy[4])
+end function
+
+GameServer = function
+    if not get_router(myproxy[0]) then return "<color=red>Server not found</color>"
+    whois_info = whois(myproxy[0])
+    whois_info = whois_info.split(char(10))[0].split(": ")[1].split(".")[0]
+    s_name = whois_info.upper[0]+whois_info.lower[1:]
+    return "<color=green>" + s_name
 end function
 
 // Define the size of the game board
@@ -119,9 +149,9 @@ end function
 
 Header = function()
 	clear_screen
-	print(char(10)+char(10)+"<size=60><color=red>    CONNECT <color=yellow>4")
+	print(char(10) + char(10) + "<size=60><color=red>    CONNECT <color=yellow>4")
 	print("<color=#A0A0A0>                                  made by <color=#FFFFFF>marko")
-	print(char(10)+char(10) + "             <color=#D2B48C><b>MAIN MENU" + char(10))
+	print(char(10) + char(10) + "             <color=#D2B48C><b>MAIN MENU" + char(10))
 	print("             1  -  Single player")
 	print("             2  -  Multiplayer")
 	print("             3  -  Information")
@@ -130,18 +160,28 @@ end function
 
 SP_Header = function()
 	clear_screen
-	print(char(10)+char(10) + "             <color=#D2B48C><b>SINGLE PLAYER" + char(10))
-	print("             1  -  Player vs Computer <color=red>>>> NOT WORKING <<<")
+	print(char(10) + char(10) + "             <color=#D2B48C><b>SINGLE PLAYER" + char(10))
+	print("             1  -  Player vs Computer")
 	print("             2  -  2 players on one computer")
 	print("             3  -  Return" + char(10))
 end function
 
 MP_Header = function()
 	clear_screen
-	print(char(10)+char(10) + "             <color=#D2B48C><b>MULTIPLAYER" + char(10))
+    print(char(10) + "             Game server: " + GameServer)
+	print(char(10) + "             <color=#D2B48C><b>MULTIPLAYER" + char(10))
 	print("             1  -  Host game")
 	print("             2  -  Join game")
 	print("             3  -  Return" + char(10))
+end function
+
+SP_AI_Header = function()
+	clear_screen
+	print(char(10) + char(10) + "             <color=#D2B48C><b>Player vs Computer" + char(10))
+	print("             1  -  Easy")
+	print("             2  -  Medium <color=red>>>> NOT WORKING <<<")
+	print("             3  -  Hard <color=red>>>> NOT WORKING <<<")
+	print("             4  -  Return" + char(10))
 end function
 
 Header
@@ -167,7 +207,117 @@ while true
 				end if
 				if inputSP then
 					if sp_choice == 1 then
-						print("<color=red>>>> NOT WORKING <<<")
+						SP_AI_Header
+						while true
+							inputSPAI = false
+							spai_choice = user_input("             Choice: ").to_int
+							if typeof(spai_choice) != "number" or spai_choice > 4 or spai_choice < 1 then
+								print("             Invalid choice!")
+							else
+								inputSPAI = true
+							end if
+							if inputSPAI then
+								if spai_choice == 1 then
+									CreateBoard
+									// Initialize the current player
+									if round(rnd) == 1 then
+										current_player = PLAYER_ONE
+									else
+										current_player = PLAYER_TWO
+									end if
+									// Warnings
+									warn_incorrect = false
+									warn_full = false
+									
+									// Play the game
+									while true
+										if not warn_incorrect and not warn_full then print_board()
+										// Ask the current player to make a move
+										if warn_incorrect and current_player == PLAYER_ONE then
+											print(char(10) + "Invalid move, try again.")
+											warn_incorrect= false
+										end if
+										if warn_full and current_player == PLAYER_ONE then
+											print(char(10) + "Column is full, try again")
+											warn_full = false
+										end if
+										if current_player == PLAYER_ONE then
+											
+											moveit = user_input(char(10) + "<indent=5%><size=20>" + current_player + "  enter a column number (1-" + COLS + "): ").to_int
+											// Check if the move is valid
+											if typeof(moveit) != "number" or (moveit - 1) < 0 or (moveit - 1) >= COLS then
+       											warn_incorrect= true
+        										continue
+    										end if
+											col = moveit - 1
+										else
+											moveit = round(rnd * 6)
+											col = moveit
+											wait(1)
+										end if
+										// Find the lowest empty row in the selected column
+										row = null
+    									for i in range(ROWS- 1 , 0)
+        									if board[i][col] == " " then
+            									row = i
+            									break
+        									end if
+    									end for
+    
+    									if row == null then
+        									warn_full = true
+        									continue
+    									end if
+										
+										// Place the player's symbol in the selected row and column
+    									board[row][col] = current_player
+										is_board_full = true
+										for i in range(0, ROWS - 1)
+											for j in range(0, COLS - 1)
+												if board[i][j] == " " then
+													is_board_full = false
+													break
+												end if
+											end for
+										end for
+										
+										// Check if the game is over
+    									if check_winner(current_player) then
+        									print_board()
+											if current_player == PLAYER_ONE then
+												winner = "Player"
+											else
+												winner = "Computer"
+											end if
+        									print(char(10) + "<b><indent=5%><size=20>GAME OVER! " + winner + " with  </b>" + current_player + "  <b>wins!")
+											user_input(char(10) + "<indent=5%>Press enter to continue...")
+											break
+    									else if is_board_full then
+											print_board()
+        									print(char(10) + "<indent=5%><size=20>Tie game!")
+											user_input(char(10) + "<indent=5%>Press enter to continue...")
+											break
+    									end if
+										
+										// Switch to the other player
+										if current_player == PLAYER_ONE then
+											current_player = PLAYER_TWO
+										else
+											current_player = PLAYER_ONE
+										end if
+									end while
+									SP_Header
+									break
+								else if spai_choice == 2 then
+									print("             <color=red>>>> NOT WORKING <<<")
+								else if spai_choice == 3 then
+									print("             <color=red>>>> NOT WORKING <<<")
+								else
+									SP_Header
+									break
+								end if
+							end if
+						end while
 					else if sp_choice == 2 then
 						CreateBoard
 						// Initialize the current player
@@ -268,6 +418,10 @@ while true
 					if mp_choice == 1 then
 						clear_screen
 						if not game_shell then GetGameShell
+                        if not game_shell then
+                            MP_Header
+                            break
+                        end if
 						games = game_shell.host_computer.File("/Games")
 						if not games then
 							out = game_shell.host_computer.create_folder("/", "Games")
@@ -276,7 +430,7 @@ while true
 								MP_Header
 								break
 							end if
-							gamems = game_shell.host_computer.File("/Games")
+							games = game_shell.host_computer.File("/Games")
 							if not games then
 								print("<indent=5%>Error: Folder /Games not found on game server")
 								MP_Header
@@ -336,17 +490,23 @@ while true
 						print(char(10) + "             Waiting oponent to join match...")
 						print(char(10) + "             (timeout after 30 seconds)")
 						timewait = 0
+                        timeout = false
 						while thisgame.get_content.split(char(10)).len != 2
 							if thisgame.get_content.split(char(10)).len == 2 then break
 							if timewait == 30 then
-								print(char(10) + "             TIMEOUT! Oponent not connected!")
-								user_input(char(10) + "<indent=5%>Press enter to continue...")
+								print(char(10) + char(10) + "             <color=#FF4500>TIMEOUT! Oponent not connected!")
+								user_input(char(10) + "             Press enter to return to main menu...")
+                                timeout = true
 								break
 							end if
 							wait(1)
 							timewait = timewait + 1
 						end while
-						print(char(10) + "             Starting game...")
+						if timeout then
+                            Header
+                            break
+                        end if
+                        print(char(10) + "             Starting game...")
 						wait(2)
 						
 						CreateBoard
@@ -391,6 +551,7 @@ while true
 								print(char(10) + "<indent=5%>Waiting for " + player_two_name + "  (" + PLAYER_TWO + ")  to make a move...")
 								while true
 									if thisgame.get_content.split(char(10)).len > lastlength then break
+                                    wait(0.1)
 								end while
 								moveit = thisgame.get_content.split(char(10))[-1].split(" -- ")[1].to_int
 								col = moveit - 1
@@ -446,14 +607,22 @@ while true
 							end if							
 						end while
 						
-						clear_screen
 						MP_Header
 					else if mp_choice == 2 then
 						clear_screen
 						if not game_shell then GetGameShell
-						print(char(10))
-						while true
+                        if not game_shell then
+                            MP_Header
+                            break
+                        end if
+						print(char(10) + "             Enter <color=#00FF00>e</color> to return to menu" + char(10))
+                       MPJoinbreak = false
+                       while true
 							gameid = user_input("             Enter game ID number: <color=white>" )
+                            if gameid.lower == "e" then
+                                MPJoinbreak = true
+                                break
+                            end if
 							thisgame = game_shell.host_computer.File("/Games/Connect4/" + gameid)
 							if not thisgame then
 								print("             Error: wrong game ID")
@@ -461,7 +630,11 @@ while true
 								break
 							end if
 						end while
-						while true
+						if MPJoinbreak then
+                            Header
+                            break
+                        end if
+                        while true
 							nameOK = true
 							myname = user_input(char(10) + "             Enter your name: " )
 							for c in myname
@@ -509,6 +682,7 @@ while true
 								print(char(10) + "<indent=5%>Waiting for " + player_one_name + "  (" + PLAYER_ONE + ")  to make a move...")
 								while true
 									if thisgame.get_content.split(char(10)).len > lastlength then break
+                                    wait(0.1)
 								end while
 								moveit = thisgame.get_content.split(char(10))[-1].split(" -- ")[1].to_int
 								col = moveit - 1
@@ -572,7 +746,6 @@ while true
 								current_player = PLAYER_ONE
 							end if	
 						end while
-						clear_screen
 						MP_Header
 					else
 						Header
@@ -585,7 +758,7 @@ while true
 			print(char(10)+char(10) + "             <color=#D2B48C><b>INFORMATION" + char(10))
 			print("<indent=5%>The objective of the game is for a player to be the first to form a straight line of 4 tokens of their own color.")
 			print("<indent=5%>The four tokens can be connected vertically, horizontally or diagonally." + char(10))
-			print("<indent=5%>When arranging a multiplayer game, it's necessary to exchange game ID number forthe game to start. One player 'hosts' the game, the other one joins with the provided game ID number.")
+			print("<indent=5%>When arranging a multiplayer game, it's necessary to exchange game ID number for the game to start. One player 'hosts' the game, the other one joins with the provided game ID number.")
 			print("<indent=5%>When a multiplayer game is hosted, the second player has 30 seconds to connect or there will be a timeout. In multiplayer, the hosting player always starts first." + char(10) + char(10))
 			user_input("<indent=5%>Press enter to continue...")
 			Header
