@@ -26,6 +26,12 @@ A falling bricks game, in the style of T*tris.
 A [Z-Machine](http://inform-fiction.org/zmachine/) interpreter for Grey Hack.
 
 
+## Connect Four
+
+[connect-four](connect-four)
+
+
+
 # License
 
 All the files in this repository are under the [MIT License](LICENSE).
