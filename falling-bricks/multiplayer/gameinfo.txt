@@ -1,0 +1,5 @@
+name=Falling Bricks
+desc=A T*tris Clone
+min-players=1
+max-players=1
+client=fallingbricks.src

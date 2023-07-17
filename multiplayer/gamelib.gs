@@ -1,184 +1,203 @@
-// Basic multiplayer game library.
+// Example Multiplayer Game Library.
 
-GameServer = {}
-GameServer.New = function(addr, username, passwd, port=21, service="ftp", gameDir="/home/guest")
-    ret = new GameServer
-    // GameName The game's name, so that the player only interacts with people in the same game.
-    ret.addr = addr
-    ret.username = username
-    ret.passwd = passwd
-    if port isa string then port = port.to_int
-    ret.port = port
-    ret.service = service
-    ret.gameDir = gameDir
-    ret.server = null
-    ret.queue = {}
-    ret.sendId = {}
+GameLib = {}
+
+// New Create a new GameLib object.  Returns null on error in the setup.
+GameLib.New = function(context=null)
+    if context == null then context = get_custom_object
+    ret = new GameLib
+    if not context.hasIndex("gameDir") or not context.hasIndex("server") or not context.hasIndex("controller") or not context.hasIndex("playerName") then
+        print("Invalid context object")
+        return null
+    end if
+
+    ret.gameDir = context.gameDir
+    if not ret.gameDir isa string then return null
+
+    ret.server = context.server
+    if typeof(ret.server) != "computer" then return null
+
+    ret.controller = context.controller
+    if typeof(ret.controller) != "file" then return null
+
+    // PlayerName the current game player's alias.
+    ret.PlayerName = context.playerName  // string
+    if not ret.PlayerName isa string then return null
+
+    file = ret.server.File(ret.gameDir + "/.host.txt")
+    if file == null then return null
+
+    // PlayerOrder order of players in the game; the hosting player is first.
+    ret.PlayerOrder = file.get_content.split(char(10))
+
+    ret.ctrlIdx = ""
+    ret.postId = {}
+    ret.postQueue = {}
     ret.recvId = {}
+
     return ret
 end function
 
-// Connect Connect to the server.  Returns a string on error, and null on okay.
-GameServer.Connect = function()
-    if self.server == null then
-        srv = get_shell.connect_service(addr, port, username, passwd, service)
-        if srv isa string then
-            return srv
-        end if
-        self.server = srv
+// NextCommand Read the next command from the controller.
+//
+// Returns null if there is no new command, or an array
+// [isKey (boolean), value].  If isKey is 1, then the value
+// is the name of the key (the enter key is 'Enter').  If
+// isKey is 0, then the value is the line entered.
+// If the isKey is 2, then the controller program has exited.
+GameLib.NextCommand = function()
+    val = self.controller.get_content
+    if val == "exit" then return [2, ""]
+    pos = val.indexOf("|")
+    if pos == null then return null
+    idx = val[:pos]
+    if idx != ret.ctrlIdx then
+        // New command
+        self.ctrlIdx = idx
+        if val[pos+1] == "!" then return [1, val[pos+2:]]
+        return [0, val[pos+2:]]
     end if
     return null
 end function
 
-GameServer.msgSep = char(1)
-GameServer.maxQueueLen = 100
-GameServer.post = function(location, action)
-    if self.server == null then return "not connected"
-    if action.indexOf(GameServer.msgStart) != null then return "invalid message content"
-    if not self.sendId.hasIndex(location) then self.sendId[location] = 0
-    if not self.queue.hasIndex(location) then self.queue[location] = []
-    if self.queue[location].len >= GameServer.maxQueueLen then self.queue[location].pull
-    self.sendId[location] = self.sendId[location] + 1
-    self.queue[location].push([str(self.sendId[location]), current_date, action])
-    content = ""
-    for msg in self.queue[location]
-        content = content + GameServer.msgSep + msg[0] + "." + msg[1] + "." + action
+// NewMessagesFrom Pull the latest messages from a single name, in the form [datetime, message, epoch].
+//
+// This is useful for pulling non-player messages, such as the host actions.
+GameLib.NewMessagesFrom = function(name)
+    // pull all available messages from the location since the last pull.
+    if self.server == null then return []
+    locStr = self.gameDir + "/" + name
+    maxRecvId = -1
+    if self.recvId.hasIndex(name) then maxRecvId = -1
+    prevRecvId = maxRecvId
+    file = self.server.File(locStr)
+    if file == null then return []
+    res = file.get_content
+    if res == null then return []
+    ret = []
+    for message in res.split(GameLib.msgSep)
+        p1 = message.indexOf(".")
+        if p1 == null then continue
+        idx = message[:p1].to_int
+        if idx <= prevRecvId then continue
+        if idx > maxRecvId then maxRecvId = idx
+        p2 = message.indexOf(".", p1 + 1)
+        if p2 == null then continue
+        when = message[p1+1:p2]
+        ret.push([when, message[p2+1:], GameLib.dateEpoch(when)])
     end for
-    content = content[1:]
+    self.recvId[name] = maxRecvId
+    return ret
+end function
 
-    file = self.server.host_computer.File(location)
+// NewMessages Pull new messages from all the players.  Ordered by date+time posted
+GameLib.NewMessages = function()
+    ret = []
+    for player in self.PlayerOrder
+        if player != self.PlayerName then
+            ret = ret + self.NewMessagesFrom(player)
+        end if
+    end for
+    GameLib.quickSort(ret, @GameLib__string3AscOrder)
+    return ret
+end function
+
+// Post Post a message to the server file.
+//
+// Returns a string on error, null on no error.
+GameLib.Post = function(message, ref = null)
+    if self.server == null then return "not connected"
+    if message.indexOf(GameServer.msgStart) != null then return "invalid message content"
+    if ref == null then ref = self.PlayerName
+    idx = 0
+    if self.postId.hasIndex(ref) then idx = self.postId[ref]
+    if self.postQueue.hasIndex(ref) then
+        queue = self.postQueue[ref]
+        if queue.len > GameLib.maxQueueLen then queue.pull()
+    else
+        queue = []
+        self.postQueue[ref] = queue
+    end if
+    queue.push([idx, current_date, message])
+    self.postId[ref] = idx + 1
+
+    locStr = self.gameDir + "/" + ref
+    content = ""
+    for msg in queue
+        content = content + GameServer.msgSep + msg[0] + "." + msg[1] + "." + msg[2]
+    end for
+    content = content[1:]  // strip leading separator
+
+    file = self.server.File(locStr)
     if file == null then
-        pos = location.lastIndexOf("/")
-        if pos < 0 then return "invalid location: '" + location + "'"
-        res = self.server.host_computer.touch(location[:pos], location[pos+1:])
-        if res isa string then return res
-        file = self.server.host_computer.File(location)
-        if file == null then return "failed to access '" + location + "'"
+        self.server.touch(self.gameDir, ref)
+        file = self.server.File(locStr)
+        if file == null then return "failed to access '" + locStr + "'"
     end if
     res = file.set_content(content)
     if res isa string then return res
     return null
 end function
 
-GameServer.closePost = function(location)
-    if self.queue.hasIndex(location) then self.queue.remove(location)
-    if self.sendId.hasIndex(location) then self.sendId.remove(location)
-    if self.server == null then return
-    file = self.server.host_computer.File(location)
-    if file != null then
-        file.delete
+// --------------------------------------------------------------------
+// Static utility functions and constants
+
+// dateEpoch Static function that turns the current_date string into a sortable value.
+GameLib.dateEpoch = function(dateStr)
+    // Keeps everything as-is except the month (which is turned into a 2 digit number) and the order.
+    dateSegments = dateStr.split(" - ")
+    date = dateSegments[0].split("/")
+    day = date[0]
+    month = date[1]
+    if dateEpochMonths.hasIndex(month) then month = dateEpochMonths[month]
+    year = date[2]
+    return year + month + day + dateSegments[1]
+end function
+
+// quickSort Sort the list (internally) using the comparison function.
+GameLib.quickSort = function(list, comparison)
+    return GameLib.quickSort__entry(list, @comparison, 0, list.len - 1)
+end function
+
+GameLib.quickSort__entry = function(list, comparison, lo, hi)
+    if lo >= 0 and hi >= 0 and lo < hi then
+        p = GameLib.quickSort__partition(list, @comparison, lo, hi)
+        GameLib.quickSort__entry(list, @comparison, lo, p)
+        GameLib.quickSort__entry(list, @comparison, p + 1, hi)
     end if
 end function
 
-GameServer.pull = function(location)
-    // pull all available messages from the location since the last pull.
-    if self.server == null then return "not connected"
-    if not self.recvId.hasIndex(location) then self.recvId[location] = -1
-    file = self.server.host_computer.File(location)
-    if file == null then return []
-    res = file.get_content
-    if res == null then return []
-    ret = []
-    for message in res.split(GameServer.msgSep)
-        p1 = message.indexOf(".")
-        if p1 == null then continue
-        idx = message[:p1].to_int
-        if idx <= self.recvId[location] then continue
-        p2 = message.indexOf(".", p1 + 1)
-        if p2 == null then continue
-        ret.push([idx, message[p1+1:p2], message[p2+1:]])
-    end for
-    return ret
+GameLib.quickSort__partition = function(list, comparison, lo, hi)
+    pivot = list[floor((hi - lo) / 2) + lo]
+    i = lo - 1
+    j = hi + 1
+    while true
+        i = i + 1
+        while comparison(list[i], pivot) < 0
+            i = i + 1
+        end while
+        j = j - 1
+        while comparison(list[j], pivot) > 0
+            j = j - 1
+        end while
+        if i >= j then return j
+        tmp = list[i]
+        list[i] = list[j]
+        list[j] = tmp
+    end while
 end function
 
-GameServer.listIn = function(dirLocation)
-    if self.server == null then return []
-    file = self.server.host_computer.File(dirLocation)
-    if file == null or not file.is_folder then return []
-    ret = []
-    for child in file.get_files
-        ret.append({"path": child.path, "name": child.name})
-    end for
-    return ret
+// GameLib__string3AscOrder Sort by the third index of the two arrays.
+//    Strangely named to avoid issues with referencing functions in maps.
+GameLib__string3AscOrder = function(a, b)
+    if a[3] == b[3] then return 0
+    if a[3] < b[3] then return -1
+    return 1
 end function
 
-// SetupServer Construct the server directories, so that people can easily connect.
-GameServer.SetupServer = function()
-    if self.server == null then return "not connected"
-    // Ensure the gameDir exists...
-    base = "/"
-    for sub in self.gameDir.split("/")
-        base = base + "/" + sub
-        subdir = self.server.host_computer.File(base)
-        if subdir == null then
-            res = self.server.host_computer.create_folder(base)
-            if res isa string then return res
-        else if not subdir.is_folder then
-            return "bad setup: '" + subdir.path + "' is not a folder"
-        end if
-    end for
-end function
-
-// VisitLobby Connect to the lobby.  Returns a string on error or the Lobby object.
-GameServer.VisitLobby = function(gameName, playerName, force=false)
-    // Ensure the directories exist.
-    res = self.SetupServer()
-    if res != null then return res
-    lobby = GameServer.Lobby.mk(self, gameName, playerName)
-    for path in [server.baseGameDir, lobby.lobbyDir, lobby.pendingGameDir, lobby.activeGameDir]
-        subdir = self.server.host_computer.File(lobby.lobbyDir)
-        if subdir == null then
-            res = self.server.host_computer.create_folder()
-            if res isa string then return res
-        end if
-    end for
-    file = self.server.host_computer.File(lobby.userFile)
-    if not force and file != null then return "user '" + playerName + "' already in lobby"
-    self.post(lobby.userFile, "Arrived")
-    return lobby
-end function
-
-// Lobby The game lobby.  Allows for chats and game matching.
-GameServer.Lobby = {}
-GameServer.Lobby.mk = function(server, gameName, playerName)
-    if playername.indexOf("/") != null then return null
-    ret = new GameServer.Lobby
-    ret.playerName = playerName
-    ret.server = server
-    ret.baseGameDir = server.gameDir + "/" + gameName
-    ret.lobbyDir = ret.baseGameDir + "/Lobby"
-    ret.pendingGameDir = ret.baseGameDir + "/Pending"
-    ret.activeGameDir = ret.baseGameDir + "/Active"
-    ret.userFile = ret.lobbyDir + "/" + playerName
-    return ret
-end function
-
-// Lobby.Disconnect Disconnect from the lobby.
-GameServer.Lobby.Disconnect = function()
-    if self.server == null then return "not connected"
-    self.server.closePost(lobby.userFile)
-    file = self.server.host_computer.File(lobby.userFile)
-    if file != null then file.delete
-    self.server = null
-end function
-
-// Lobby.ListPlayers Get the list if player names in the lobby.
-GameServer.Lobby.ListPlayers = function()
-    if self.server == null then return null
-    for item in self.server.listIn(ret.lobbyDir)
-        if item.name != self.playerName then ret.push(item.name)
-    end for
-    return ret
-end function
-
-// Lobby.GetPlayerText Get the player's text comments since the last request.
-//
-// Returns a list of [datetime, text]
-GameServer.Lobby.GetPlayerText = function(name)
-    if self.server == null then return null
-    ret = []
-    for item in self.server.pull(self.lobbyDir + "/" + name)
-        ret.push([item[1], item[2]])
-    end for
-    return ret
-end function
+GameLib.dateEpochMonths = {
+    "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04", "May": "05", "Jun": "06",
+    "Jul": "07", "Aug": "08", "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+}
+GameLib.msgSep = char(1)
+GameLib.maxQueueLen = 100

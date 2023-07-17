@@ -1,0 +1,40 @@
+// A game input controller program to allow real-time input to the server games.
+
+controllerFileName = home_dir + "/.controller.txt"
+if params.len > 0 then controllerFileName = params[0]
+pos = controllerFileName.lastIndexOf("/")
+get_shell.host_computer.touch(controllerFileName[:pos], controllerFileName[pos+1:])
+controllerFile = get_shell.host_computer.File(controllerFileName)
+if controllerFile == null then exit("Failed to create controller file '" + controllerFileName + "'")
+controllerFile.set_content("0|-")
+
+mode = 0
+idx = 1
+while true
+  clear_screen
+  if mode == 0 then
+    print("Key mode.")
+    print("'F12' key to enter line mode.")
+    x = user_input("input> ", false, true)
+    if x == "F12" then
+      mode = 1
+    else
+      if x == "" then x = "Enter"
+      controllerFile.set_content(idx + "|!" + x)
+      idx = idx + 1
+    end if
+  else
+    print("Line mode.  Type a messange then <enter> to send it.")
+    print("':ch' changes to key mode; ':exit' to quit.")
+    x = user_input("input> ", false, false)
+    if x == ":ch" then
+      mode = 0
+    else if x == ":exit" then
+      break
+    else
+      controllerFile.set_content(idx + "|-" + x)
+      idx = idx + 1
+    end if
+  end if
+end while
+controllerFile.set_content("exit")

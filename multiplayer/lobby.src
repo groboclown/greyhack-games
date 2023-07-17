@@ -1,0 +1,943 @@
+// Multiplayer Game Lobby.
+// People join the lobby, and allows them to start new multiplayer games.
+
+CONTROLLER_FILENAME = home_dir + "/.controller.txt"
+IMPORT_BIN = home_dir + "/bin/import"
+DOWNLOAD_DIR = home_dir + "/Downloads"
+
+
+CONTROLLER_FILE = get_shell.host_computer.File(CONTROLLER_FILENAME)
+if CONTROLLER_FILE == null then
+    get_shell.host_computer.touch(home_dir, ".controller.txt")
+    CONTROLLER_FILE = get_shell.host_computer.File(CONTROLLER_FILENAME)
+end if
+if CONTROLLER_FILE == null or CONTROLLER_FILE.is_binary then
+    exit("Could not set up controller file " + CONTROLLER_FILENAME)
+end if
+
+
+main = function()
+    if params.len != 2 or params.indexOf("-h") != null or params.indexOf("--help") != null then
+        print("Usage: " + program_path + " [-h | --help] configfile handle")
+        print("")
+        print(" -h | --help       This help screen.")
+        print(" configfile        Location of the configuration file for connecting to the game server.")
+        print(" handle            Your alias when playing games on the server.")
+        exit
+    end if
+
+    userHandle = params[1]
+    if IsInvalidName(userHandle) then
+        exit("Invalid user handle.  It must be alpha-numeric (a-z, A-Z, 0-9)")
+    end if
+
+    server = GameServer.LoadFrom(params[0])
+    if server == null then exit("Failed to load server configuration.")
+    res = server.Connect()
+    if res != null then exit("Failed to connect to server: " + res)
+
+    state = 0
+    lobby = null
+    joinedGame = null
+    while true
+        if state == 0 then
+            // In the lobby
+            if joinedGame != null then joinedGame.Leave()
+            if lobby == null then
+                lobby = server.EnterLobby(userHandle, false)
+                if lobby == null then
+                    print("Failed to connect to lobby. Someone else may already be using your handle.")
+                    return
+                end if
+            end if
+            // TODO pull messages and possibly refresh screen
+            // TODO check controller state
+            // TODO wait if nothing to do based on controller state.
+        else if state == 1 then
+            // In the pending game
+            if joinedGame == null then
+                if lobby != null then lobby.Disconnect()
+                exit("Bad state: joined game is null")
+            end if
+
+            // TODO pull messages and possibly refresh screen
+            // TODO check controller state
+            // TODO wait if nothing to do based on controller state.
+        else
+            if joinedGame != null then joinedGame.Leave()
+            if lobby != null then lobby.Disconnect()
+            print("Quitting server.")
+            return
+        end if
+    end while
+end function
+
+// ====================================================================
+// Game Server + Everything Else Library Code
+
+GameServer = {}
+GameServer.LoadFrom = function(filename)
+    file = get_shell.host_computer.File(filename)
+    if file == null then file = get_shell.host_computer.File(current_path + "/" + filename)
+    if file == null then file = get_shell.host_computer.File(home_dir + "/" + filename)
+    if file == null then
+        print("Could not find local file '" + filename + "'")
+        return null
+    end if
+    props = ParsePropertyFile(file.get_content)
+    addr = null
+    username = "guest"
+    passwd = "guest"
+    port = 21
+    service = "ftp"
+    gameDir = "/home/guest"
+    if props.hasIndex("ip") then addr = props.ip
+    if props.hasIndex("username") then username = props.username
+    if props.hasIndex("password") then passwd = props.password
+    if props.hasIndex("port") then port = props.port
+    if props.hasIndex("service") then service = props.service
+    if props.hasIndex("dir") then gameDir = props.dir
+    if addr == null then
+        print("No 'ip' field set in the game property file '" + filename + "'")
+        return null
+    end if
+    return GameServer.mk(addr, username, passwd, port, service, gameDir)
+end function
+GameServer.mk = function(addr, username, passwd, port, service, gameDir)
+    ret = new GameServer
+    // GameName The game's name, so that the player only interacts with people in the same game.
+    ret.addr = addr
+    ret.username = username
+    ret.passwd = passwd
+    if port isa string then port = port.to_int
+    ret.port = port
+    ret.service = service
+    ret.gameDir = gameDir
+    ret.server = null
+    ret.queue = {}
+    ret.sendId = {}
+    ret.recvId = {}
+    ret.knownGames = {}
+    return ret
+end function
+
+// Connect Connect to the server.  Returns a string on error, and null on okay.
+GameServer.Connect = function(user=null, passwd=null)
+    if user == null then user = self.username
+    if passwd == null then passwd = self.passwd
+    if self.server == null then
+        if self.addr == "localhost" then
+            srv = get_shell
+        else
+            srv = get_shell.connect_service(self.addr, self.port, user, passwd, self.service)
+        end if
+        if srv isa string then
+            return srv
+        end if
+        self.server = srv
+    end if
+    return null
+end function
+
+// EnterLobby Connect to the lobby.  Returns a string on error or the Lobby object.
+GameServer.EnterLobby = function(playerName, force=false)
+    return GameServer.Lobby.mk(self, playerName, force)
+end function
+
+// FetchGames Get a map of all games on the server.
+GameServer.FetchGames = function()
+    if self.server == null or self.server.server == null then return {}
+    self.knownGames = {}
+    for item in self.server.listDirsIn(self.gameDir)
+        gameName = item.name
+        gameDir = item.path
+        aboutFile = self.server.host_computer.File(gameDir + "/about.txt")
+        infoFile = self.server.host_computer.File(gameDir + "/gameinfo.txt")
+        if aboutFile == null or infoFile == null then continue
+        game = GameServer.GameInfo.mk(self, aboutFile, infoFile)
+        if game != null then
+            self.knownGames[game.SimpleName] = game
+        end if
+    end for
+    return self.knownGames
+end function
+
+// KnownGames Get the map of simple name to game info.
+GameServer.KnownGames = function()
+    if self.knownGames.len <= 0 then self.FetchGames
+    return self.knownGames
+end function
+
+GameServer.msgSep = char(1)
+GameServer.maxQueueLen = 100
+GameServer.post = function(location, action)
+    if self.server == null then return "not connected"
+    if action.indexOf(GameServer.msgStart) != null then return "invalid message content"
+    if not location isa list or location.len != 2 then exit("post: Invalid API usage")
+    locStr = location[0] + "/" + location[1]
+    if not self.sendId.hasIndex(locStr) then self.sendId[locStr] = 0
+    if not self.queue.hasIndex(locStr) then self.queue[locStr] = []
+    if self.queue[locStr].len >= GameServer.maxQueueLen then self.queue[locStr].pull
+    self.sendId[locStr] = self.sendId[locStr] + 1
+    self.queue[locStr].push([str(self.sendId[locStr]), current_date, action])
+    content = ""
+    for msg in self.queue[locStr]
+        content = content + GameServer.msgSep + msg[0] + "." + msg[1] + "." + msg[2]
+    end for
+    content = content[1:]
+
+    file = self.getOrMkFile(location)
+    if file == null then return "failed to access '" + location[0] + "/" + location[1] + "'"
+    res = file.set_content(content)
+    if res isa string then return res
+    return null
+end function
+
+GameServer.closePost = function(location)
+    if not location isa list or location.len != 2 then exit("post: Invalid API usage")
+    locStr = location[0] + "/" + location[1]
+    if self.queue.hasIndex(locStr) then self.queue.remove(locStr)
+    if self.sendId.hasIndex(locStr) then self.sendId.remove(locStr)
+    self.rmFile(location)
+end function
+
+GameServer.pull = function(location)
+    // pull all available messages from the location since the last pull.
+    if not location isa list or location.len != 2 then exit("post: Invalid API usage")
+    if self.server == null then return []
+    locStr = location[0] + "/" + location[1]
+    maxRecvId = -1
+    if self.recvId.hasIndex(locStr) then maxRecvId = -1
+    prevRecvId = maxRecvId
+    file = self.getExistingFile(location)
+    if file == null then return []
+    res = file.get_content
+    if res == null then return []
+    ret = []
+    for message in res.split(GameServer.msgSep)
+        p1 = message.indexOf(".")
+        if p1 == null then continue
+        idx = message[:p1].to_int
+        if idx <= prevRecvId then continue
+        if idx > maxRecvId then maxRecvId = idx
+        p2 = message.indexOf(".", p1 + 1)
+        if p2 == null then continue
+        ret.push([idx, message[p1+1:p2], message[p2+1:]])
+    end for
+    self.recvId[locStr] = maxRecvId
+    return ret
+end function
+
+GameServer.listIn = function(dirLocation)
+    if self.server == null then return []
+    if dirLocation isa list then dirLocation = dirLocation[0] + "/" + dirLocation[1]
+    file = self.server.host_computer.File(dirLocation)
+    if file == null or not file.is_folder then return []
+    ret = []
+    for child in file.get_files
+        ret.append(child)
+    end for
+    return ret
+end function
+
+GameServer.listDirsIn = function(dirLocation)
+    if self.server == null then return []
+    if dirLocation isa list then dirLocation = dirLocation[0] + "/" + dirLocation[1]
+    file = self.server.host_computer.File(dirLocation)
+    if file == null or not file.is_folder then return []
+    ret = []
+    for child in file.get_folders
+        ret.append(child)
+    end for
+    return ret
+end function
+
+GameServer.mkFilename = function(dirname, basename)
+    if dirname isa string then return [dirname, basename]
+    if dirname.len != 2 then exit("mkFilename: Invalid API usage")
+    nextDir = dirname[0] + "/" + dirname[1]
+    return [nextDir, basename]
+end function
+
+GameServer.getOrMkFile = function(filename)
+    if not filename isa list or filename.len != 2 then exit("getOrMkFile: Invalid API usage")
+    if self.server == null then return null
+    self.server.host_computer.touch(filename[0], filename[1])
+    return self.server.host_computer.File(filename[0] + "/" + filename[1])
+end function
+
+GameServer.getExistingFile = function(filename)
+    if not filename isa list or filename.len != 2 then exit("getExistingFile: Invalid API usage")
+    if self.server == null then return null
+    return self.server.host_computer.File(filename[0] + "/" + filename[1])
+end function
+
+GameServer.mkNewFile = function(filename)
+    if not filename isa list or filename.len != 2 then exit("mkNewFile: Invalid API usage")
+    if self.server == null then return null
+    file = self.server.host_computer.File(filename[0] + "/" + filename[1])
+    if file != null then return null
+    self.server.host_computer.touch(filename[0], filename[1])
+    return self.server.host_computer.File(filename[0] + "/" + filename[1])
+end function
+
+GameServer.mkDir = function(dirLocation)
+    if dirLocation isa list then dirLocation = dirLocation[0] + "/" + dirLocation[1]
+    pos = dirLocation.lastIndexOf("/")
+    self.server.host_computer.create_folder(dirLocation[:pos], dirLocation[pos+1:])
+    file = self.server.host_computer.File(dirLocation)
+    if file == null or not file.is_folder then return null
+    return file
+end function
+
+GameServer.rmFile = function(filename)
+    if not filename isa list or filename.len != 2 then exit("rmFile: Invalid API usage")
+    if self.server == null then return null
+    file = self.server.host_computer.File(filename[0] + "/" + filename[1])
+    if file != null then return file.delete
+    return self.server.host_computer.File(filename[0] + "/" + filename[1]) == null
+end function
+
+GameServer.rmTree = function(baseDir)
+    if baseDir isa list then baseDir = baseDir[0] + "/" + baseDir[1]
+    if baseDir isa string then baseDir = self.server.host_computer.File(baseDir)
+    visited = {}
+    remaining = [baseDir]
+    while remaining.len > 0
+        parent = remaining.pop()
+        if parent != null then
+            subfolders = parent.get_folders
+            for child in parent.get_files
+                child.delete
+            end for
+            if subfolders.len > 0 and not visited.hasIndex(parent.path) then
+                // Need to remove the child folders before this can be removed.
+                remaining.push(parent)
+                remaining = remaining + subfolders
+            else
+                // Try to delete.  May not work, but we won't revisit this parent.
+                parent.delete
+            end if
+            visited[parent.path] = true
+        end if
+    end while
+end function
+
+// ====================================================================
+
+// ChatRoom A room where players can chat.
+//    Creation returns either a string (meaning error) or an object.
+GameServer.ChatRoom = {}
+GameServer.ChatRoom.mk = function(server, roomDir, playerName, force)
+    if IsInvalidName(playerName) then return "invalid player name '" + playerName + "'"
+    userFile = server.mkFilename(roomDir, playerName)
+    if not force then
+        file = server.getExistingFile(userFile)
+        if file != null then return "player already in the chat room"
+    end if
+    res = server.post(userFile, "Joins")
+    if res != null then return res
+
+    ret = new GameServer.ChatRoom
+    ret.playerName = playerName
+    ret.server = server
+    ret.roomDir = roomDir
+    ret.userFile = userFile
+    ret.knownPlayers = {}
+    ret.first = true
+    return ret
+end function
+
+// ChatRoom.Disconnect Disconnect from the room.
+GameServer.ChatRoom.Disconnect = function()
+    if self.server == null then return "not connected"
+    self.server.closePost(self.userFile)
+    self.server = null
+end function
+
+// ChatRoom.ListPlayers Get the list of other player names in the room.
+GameServer.ChatRoom.ListPlayers = function()
+    if self.server == null then return null
+    ret = []
+    for item in self.server.listIn(self.roomDir)
+        if item.name != self.playerName then ret.push(item.name)
+    end for
+    return ret
+end function
+
+// ChatRoom.GetPlayerText Get the player's text comments since the last request.
+//
+// Returns a list of [datetime, playername, text]
+GameServer.ChatRoom.GetPlayerText = function(name)
+    if self.server == null then return null
+    ret = []
+    for item in self.server.pull(self.server.mkFilename(self.roomDir, name))
+        ret.push([item[1], item[2]])
+    end for
+    return ret
+end function
+
+// ChatRoom.Post Post a message as the player to the server lobby.
+GameServer.ChatRoom.Post = function(message)
+    if self.server == null then return "Not connected"
+    return self.server.post(self.userFile, message)
+end function
+
+// ChatRoom.PullMessages Get the latest unread messages.
+//
+// Returns a list of each message, where each item in the list is [date, user, message, dateEpoch]
+GameServer.ChatRoom.PullMessages = function()
+    if self.server == null then return []
+    ret = []
+    now = current_date
+    nowEpoch = dateEpoch(now)
+    lastPlayers = ret.knownPlayers
+    ret.knownPlayers = {}
+    for item in self.server.listIn(self.roomDir)
+        if item.name != self.playerName and item.name[0] != "." then
+            ret.knownPlayers[item.name] = true
+            if lastPlayers.hasIndex(item.name) then
+                lastPlayers.remove(item.name)
+            else if not self.first then
+                ret.push([now, item.name, item.name + " entered the room.", nowEpoch])
+            end if
+            location = self.server.mkFilename(self.roomDir, item.name)
+            for msg in self.server.pull(location)
+                ret.push([msg[1], item.name, msg[2], dateEpoch(msg[1])])
+            end for
+        end if
+    end for
+    for name in lastPlayers.indexes
+        ret.push([now, name, name + " left the room.", nowEpoch])
+    end for
+    self.first = false
+    // sort by date (index [3] in each item).
+    QuickSort(ret, @String3AscOrder)
+    return ret
+end function
+
+// ====================================================================
+
+// Lobby The game lobby.  Allows for chats and game matching.
+GameServer.Lobby = {}
+GameServer.Lobby.mk = function(server, playerName, force)
+    if IsInvalidName(playerName) then return null
+    ret = new GameServer.Lobby
+    ret.playerName = playerName
+    ret.server = server
+    ret.lobbyDir = server.gameDir + "/Lobby"
+    // KnownGames map of game name -> GameInfo
+    ret.KnownGames = {}
+    ret.pendingGameState = {}  // map of game name / instance name -> state
+    ret.chatRoom = GameServer.ChatRoom.mk(server, ret.lobbyDir, playerName, force)
+    if ret.chatRoom == null then return null
+    return ret
+end function
+
+// Lobby.Disconnect Disconnect from the lobby.
+GameServer.Lobby.Disconnect = function()
+    if self.server == null then return "not connected"
+    if self.chatRoom != null then self.chatRoom.Disconnect
+    self.chatRoom = null
+    self.server = null
+    self.KnownGames = {}
+end function
+
+// Lobby.PullMessages Pull messages from players and pending game state changes.
+GameServer.Lobby.PullMessages = function()
+    if self.server == null or self.chatRoom == null then return []
+    // TODO update KnownGames and pendingGameState.  Changes to pendingGameState are added as messages.
+    // TODO get chat messages.
+    // TODO sort messages by epoch date
+    // TODO return messages
+end function
+
+GameServer.Lobby.PostMessage = function(msg)
+    // TODO post the message to chatRoom.
+end function
+
+// ====================================================================
+// One Game information
+
+GameServer.GameInfo = {}
+GameServer.GameInfo.mk = function(server, aboutFile, infoFile)
+    // aboutFile - the File object for the `about.txt` file.
+    // infoFile - the File object for the `game.inf` file.
+    ret = new GameServer.GameInfo
+    ret.about = aboutFile.get_content
+    ret.server = server
+    aboutPath = aboutFile.path
+    pos = aboutPath.lastIndexOf("/")
+    if pos == null then return null
+    ret.gameDir = aboutPath[:pos]
+    pos = ret.gameDir.lastIndexOf("/")
+    if pos == null then return null
+    ret.SimpleName = ret.gameDir[pos + 1:]
+    ret.pendingGameDir = ret.gameDir + "/Pending"
+    ret.activeGameDir = ret.gameDir + "/Active"
+    ret.knownPendingGames = {}
+    ret.details = ParsePropertyFile(infoFile.get_content)
+    ret.Name = null
+    ret.Description = null
+    ret.MinPlayers = 0
+    ret.MaxPlayers = 0
+    ret.Client = null
+    ret.Host = null
+    ret.ClientBin = null
+    ret.HostBin = null
+    if ret.details.hasIndex("name") then ret.Name = ret.details.name
+    if ret.details.hasIndex("desc") then ret.Description = ret.details.desc
+    if ret.details.hasIndex("min-players") then ret.MinPlayers = ret.details["min-players"].to_int
+    if ret.details.hasIndex("max-players") then ret.MaxPlayers = ret.details["max-players"].to_int
+    if ret.details.hasIndex("client") then ret.Client = ret.details.client
+    if ret.details.hasIndex("client-bin") then ret.ClientBin = ret.details["client-bin"]
+    if ret.details.hasIndex("host") then ret.Host = ret.details.host
+    if ret.details.hasIndex("host-bin") then ret.HostBin = ret.details["host-bin"]
+    if ret.Name == null or ret.MinPlayers <= 0 or ret.Client == null then return null
+    if ret.Host != null and ret.Host.indexOf("/") != null then return null
+    if ret.Client.indexOf("/") != null then return null
+    return ret
+end function
+
+// GameInfo.FetchPendingGames Refresh the map of names to pending games for the game.
+GameServer.GameInfo.FetchPendingGames = function()
+    if self.server == null then return {}
+    self.knownPendingGames = {}
+    for pendingDir in self.server.listDirsIn(self.pendingGameDir)
+        pending = GameServer.PendingGame.mk(self, pendingDir, self.server.mkFilename(self.activeGameDir, pendingDir.name))
+        if pending != null then
+            self.knownPendingGames[pending.InstanceName] = pending
+        end if
+    end for
+    return self.knownPendingGames
+end function
+
+// GameInfo.JoinGame Join a pending game.
+GameServer.GameInfo.JoinGame = function(instanceName, playerName)
+    if self.server == null or self.server.server == null then return null
+    if IsInvalidName(playerName) then return null
+    if self.knownPendingGames.len <= 0 then self.FetchPendingGames
+    self.buildClientBin()
+    if self.ClientBin == null then
+        print("Error: could not create the client binary file.  Aborting.")
+        return null
+    end if
+    if not self.knownPendingGames.hasIndex(instanceName) then
+        print("Error: could not find instance '" + instanceName + "'")
+        return null
+    end if
+    pendingGame = self.knownPendingGames[instanceName]
+    pendingGame.Fetch
+    if pendingGame.Players.len > self.MaxPlayers then
+        print("Error: instance '" + instanceName + "' at player limit")
+        return null
+    end if
+    file = self.server.getOrMkFile(self.server.mkFilename(pendingGame.pendingDir, playerName))
+    if file == null then return null
+    file.set_content("joined")
+    return GameServer.JoinedInstance.mk(self.server, playerName, pendingGame)
+end function
+
+// GameInfo.HostGame Start a new instance of a game.  Creates the pending lobby.
+GameServer.GameInfo.HostGame = function(instanceName, playerName)
+    if self.server == null or self.server.server == null then return null
+    self.buildHostBin()
+    if self.HostBin == null then
+        print("Error: could not create the host binary file.  Aborting.")
+        return null
+    end if
+    server = self.server
+    gameDir = server.mkFilename(self.pendingGameDir, instanceName)
+    cleanUp = function()
+        server.rmTree(gameDir)
+        return null
+    end function
+    hostDir = server.mkDir(gameDir)
+    if hostDir == null then return cleanUp()
+    chatDir = server.mkDir(server.mkFilename(gameDir, ".chat.d"))
+    if chatDir == null then return cleanUp()
+    hostFile = server.mkNewFile(server.mkFilename(gameDir, ".host.txt"))
+    if hostFile == null then return cleanUp()
+    hostFile.set_content(playerName)
+    pendingGame = GameServer.PendingGame.mk(self, hostDir, server.mkFilename(self.activeGameDir, pendingDir.name))
+    if pendingGame == null then return null
+    return GameServer.HostedInstance.mk(self.server, playerName, pendingGame)
+end function
+
+GameServer.GameInfo.buildClientBin = function()
+    binPath = self.ClientBin
+    self.ClientBin = null
+    res = self.buildBin(self.Client, binPath)
+    if res != null then self.ClientBin = res.path
+end function
+
+GameServer.GameInfo.buildHostBin = function()
+    if self.Host == null then
+        self.buildClientBin()
+        self.HostBin = self.ClientBin
+    else
+        binPath = self.HostBin
+        self.HostBin = null
+        res = self.buildBin(self.Host, binPath)
+        if res != null then self.HostBin = res.path
+    end if
+end function
+
+GameServer.GameInfo.buildBin = function(sourceFile, sourceBin = null)
+    // This is ... special.  Due to the game file information properties.
+    // source file is the name of the file, which must be in the gameDir directory.
+    srvFile = self.server.getExistingFile(self.server.mkFilename(self.gameDir, sourceFile))
+    if srvFile == null or srvFile.is_binary then return null
+    // Local computer file, not server file.
+    get_shell.host_computer.touch(DOWNLOAD_DIR, srvFile.name)
+    file = get_shell.host_computer.File(DOWNLOAD_DIR + "/" + srvFile.name)
+    if file == null then return null
+    file.set_content(srvFile.get_content)
+    if sourceFile[-4:] == ".src" then
+        if sourceBin == null then sourceBin = file.path[:-4]
+        parent = sourceBin[:sourceBin.lastIndexOf("/")]
+        res = get_shell.build(file.path, parent)
+        if res != "" then
+            print("Error: failed to build " + sourceFile + ": " + res)
+            return null
+        end if
+        name = file.path[file.path.lastIndexOf("/") + 1:]
+        // Ignore the sourceBin real name.  Just use whatever it compiles to.
+        compiledName = parent + "/" + name
+        file = get_shell.host_computer.File(compiledName)
+        if file == null then
+            print("Error: compiled " + sourceFile + ", but couldn't find the compiled file")
+        end if
+        return file
+    else if sourceFile[-7:] == ".bundle" then
+        if sourceBin == null then return null
+        if sourceBin[:2] == "~/" or sourceBin[:2] == "-/" then
+            sourceBin = home_dir + sourceBin[1:]
+        end if
+        get_shell.launch(IMPORT_BIN, file.path)
+        return get_shell.host_computer.File(sourceBin)
+    else
+        print("Error: Don't know how to build source file " + sourceFile)
+        return null
+    end if    
+end function
+
+// ====================================================================
+// Pending Game information
+
+GameServer.PendingGame = {}
+GameServer.PendingGame.mk = function(gameInfo, pendingDir, activeDirPath)
+    ret = new GameServer.PendingGame
+    ret.server = gameInfo.server
+    ret.gameInfo = gameInfo
+    ret.InstanceName = pendingDir.name
+    ret.HostPlayer = null
+    ret.Players = {}  // Includes the host player.
+    ret.pendingDir = pendingDir.path
+    ret.activeDir = activeDirPath
+    ret.chatDir = gameInfo.server.mkFilename(pendingDir.path, ".chat.d")
+    ret.Fetch()
+    return ret
+end function
+
+// State Check if the game has started; returns "pending", "full", "needs-more-players", "starting", "active", or "abandoned"
+GameServer.PendingGame.Status = function()
+    // This is done by checking that first the game directory exists and that this one doesn't.
+    self.Fetch
+    activeFiles = self.server.listIn(self.activeDir)
+    if activeFiles.len <= 0 then
+        if self.HostPlayer == null then return "abandoned"
+        if self.Players.len >= self.gameInfo.MaxPlayers then return "full"
+        if self.Players.len < self.gameInfo.MinPlayers then return "needs-more-players"
+        return "pending"
+    end if
+    if self.HostPlayer == null then return "active"
+    return "starting"
+end function
+
+// PendingGame.Fetch Fetch the list of players for the game.  Refreshes from the server.
+GameServer.PendingGame.Fetch = function()
+    ret.HostPlayer = null
+    ret.Players = {}
+    for file in self.server.listIn(self.pendingDir)
+        if file.name == ".host.txt" then
+            ret.HostPlayer = file.get_content
+        else if file.name[0] != "." then
+            ret.Players[file.name] = file.get_content
+        end if
+    end for
+    return ret.Players
+end function
+
+GameServer.PendingGame.JoinChat = function(playerName, force)
+    return GameServer.ChatRoom.mk(self.server, self.chatDir, playerName, force)
+end function
+
+GameServer.PendingGame.close = function()
+    self.server = null
+end function
+
+// ====================================================================
+// Joined Game Instance information
+
+GameServer.JoinedInstance = {}
+GameServer.JoinedInstance.mk = function(server, playerName, pendingGame)
+    if IsInvalidName(playerName) then return null
+    ret = new GameServer.JoinedInstance
+    ret.server = server
+    ret.pendingGame = pendingGame // PendingGame instance
+    ret.playerName = playerName
+    ret.playerFile = self.server.mkFilename(pendingGame.pendingDir, playerName)
+    ret.ChatRoom = pendingGame.JoinChat(playerName, true)
+    if ret.ChatRoom == null then return null
+    return ret
+end function
+
+// JoinedInstance.Status Game status.
+GameServer.JoinedInstance.InstanceStatus = function()
+    if self.pendingGame == null then return "left"
+    return self.pendingGame.Status
+end function
+
+// JoinedInstance.Leanve Leave this game instance.
+GameServer.JoinedInstance.Leave = function()
+    if self.ChatRoom != null then self.ChatRoom.Disconnect
+    self.ChatRoom = null
+    if self.server != null then self.server.rmFile(self.playerFile)
+    self.server = null
+    self.pendingGame = null
+end function
+
+// JoinedInstance.SetStatus Set this player's status.
+GameServer.JoinedInstance.SetStatus = function(status)
+    if self.server == null then return
+    file = self.server.getExistingFile(self.playerFile)
+    if file != null then file.set_content(status)
+end function
+
+// JoinedInstance.PlayerStatus Get the other player status.
+GameServer.JoinedInstance.PlayerStatus = function()
+    if self.server == null or self.pendingGame == null then return
+    players = self.pendingGame.Fetch
+    if players.hasIndex(self.playerName) then players.remove(self.playerName)
+    return players
+end function
+
+// JoinedInstance.OnActive When the game status is "active", this can be called to launch the game.
+GameServer.JoinedInstance.Launch = function()
+    // TODO ensure the game is active
+    // TODO ensure the player has the client file compiled.
+    // TODO setup the shared object.
+    // TODO launch the client.
+    // TODO close off this instance.
+end function
+
+// ====================================================================
+// Hosted Game Instance information
+
+GameServer.HostedInstance = {}
+GameServer.HostedInstance.mk = function(server, playerName, pendingGame)
+    if IsInvalidName(playerName) or IsInvalidName(pendingGame) then return null
+    ret = new GameServer.HostedInstance
+    ret.server = server
+    ret.pendingGame = pendingGame // PendingGame instance
+    ret.playerName = playerName
+    ret.ChatRoom = pendingGame.JoinChat(playerName, true)
+    if ret.ChatRoom == null then return null
+    return ret
+end function
+
+// HostedInstance.Abandon Abandon this game.
+GameServer.HostedInstance.Abandon = function()
+    // First, remove the _host.txt file.  That's the primary signal that the instance is gone.
+    // Note that for starting a game, removing this file is the last action to indicate the game is active.
+    if self.server == null or self.pendingGame == null then return
+    if self.ChatRoom != null then self.ChatRoom.Disconnect()
+    self.server.rmFile(self.server.mkFilename(self.pendingGame.pendingDir, ".host.txt"))
+    self.server.rmTree(self.pendingGame.pendingDir)
+    self.server = null
+    self.pendingGame.close()
+    self.pendingGame = null
+end function
+
+// HostedInstance.Start Start the game.
+GameServer.HostedInstance.Start = function()
+    if self.server == null or self.pendingGame == null then return
+    if self.pendingGame.gameInfo.HostBin == null then
+        print("Error: you must prepare the game before starting it.")
+        return
+    end if
+    hostFile = get_shell.host_computer.File(self.pendingGame.gameInfo.HostBin)
+    if hostFile == null or not hostFile.is_binary then
+        print("Error: could not find the host game program.  Did it fail to build?")
+        return
+    end if
+
+    // Final refresh and state check.
+    self.pendingGame.Fetch()
+    if self.pendingGame.Players.len > self.pendingGame.gameInfo.MaxPlayers then
+        print("Error: too many players pending.  Someone needs to drop first.")
+        return
+    end if
+    if self.pendingGame.Players.len < self.pendingGame.gameInfo.MinPlayers then
+        print("Error: too few players pending.  Someone needs to join.")
+        return
+    end if
+    // TODO ensure all the players have a "ready" state.
+
+    if self.ChatRoom != null then self.ChatRoom.Post("Host has started the game.")
+
+    // Start up the active game.
+    players = []
+    for name in self.pendingGame.Players.indexes
+        if name != self.playerName then players.push(name)
+    end for
+    QuickSort(players, @BasicAscOrder)
+    content = self.playerName
+    for name in players
+        content = content + char(10) + name
+    end for
+    res = self.server.mkDir(self.pendingGame.activeDir)
+    if res != true then
+        print("Error: Failed to create the active game directory: " + res)
+        return
+    end if
+    file = self.server.getOrMkFile(self.server.mkFilename(self.pendingGame.activeDir, ".host.txt"))
+    if file == null then
+        self.server.rmTree(self.pendingGame.activeDir)
+        print("Error: failed to construct the active game directory")
+        return
+    end if
+    file.set_content(content)
+
+    if self.ChatRoom != null then self.ChatRoom.Disconnect()
+    self.ChatRoom = null
+
+    // At the very end of instance launching, the _host.txt file is removed then the pending directory.
+    self.server.rmFile(self.server.mkFilename(self.pendingGame.pendingDir, ".host.txt"))
+    self.server.rmTree(self.pendingGame.pendingDir)
+
+    // Set up the shared object.
+    //   This breaks all kinds of OO rules.
+    obj = get_custom_object
+    obj.gameDir = self.pendingGame.activeDir
+    obj.server = self.server.server.host_computer
+    obj.controller = globals.CONTROLLER_FILE
+    obj.playerName = self.playerName
+
+    // Launch the game.
+    if get_shell.launch(hostFile.path) != true then
+        print("Failed to launch the host program " + hostFile.path)
+    end if
+
+    // The game execution completed.  Now clean up the active game directory.
+    self.server.rmTree(self.pendingGame.activeDir)
+
+    // Then close this object off.  It can't be used again.
+    self.pendingGame.close()
+    self.server = null
+    self.pendingGame = null
+end function
+
+// ====================================================================
+// Utility Stuff
+
+// dateEpoch Static function that turns the current_date string into a sortable value.
+dateEpoch = function(dateStr)
+    // Keeps everything as-is except the month (which is turned into a 2 digit number) and the order.
+    dateSegments = dateStr.split(" - ")
+    date = dateSegments[0].split("/")
+    day = date[0]
+    month = date[1]
+    if dateEpochMonths.hasIndex(month) then month = dateEpochMonths[month]
+    year = date[2]
+    return year + month + day + dateSegments[1]
+end function
+
+dateEpochMonths = {
+    "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04", "May": "05", "Jun": "06",
+    "Jul": "07", "Aug": "08", "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+}
+
+// QuickSort Sort the list (internally) using the comparison function.
+QuickSort = function(list, comparison)
+    return QuickSort__entry(list, @comparison, 0, list.len - 1)
+end function
+
+QuickSort__entry = function(list, comparison, lo, hi)
+    if lo >= 0 and hi >= 0 and lo < hi then
+        p = QuickSort__partition(list, @comparison, lo, hi)
+        QuickSort__entry(list, @comparison, lo, p)
+        QuickSort__entry(list, @comparison, p + 1, hi)
+    end if
+end function
+
+QuickSort__partition = function(list, comparison, lo, hi)
+    pivot = list[floor((hi - lo) / 2) + lo]
+    i = lo - 1
+    j = hi + 1
+    while true
+        i = i + 1
+        while comparison(list[i], pivot) < 0
+            i = i + 1
+        end while
+        j = j - 1
+        while comparison(list[j], pivot) > 0
+            j = j - 1
+        end while
+        if i >= j then return j
+        tmp = list[i]
+        list[i] = list[j]
+        list[j] = tmp
+    end while
+end function
+
+// String3AscOrder Sort by the third index of the two arrays.
+String3AscOrder = function(a, b)
+    if a[3] == b[3] then return 0
+    if a[3] < b[3] then return -1
+    return 1
+end function
+
+// BasicAscOrder Sort ascending
+BasicAscOrder = function(a, b)
+    if a == b then return 0
+    if a < b then return -1
+    return 1
+end function
+
+// ParsePropertyFile Parse the property file formatted contents.
+ParsePropertyFile = function(contents)
+    if contents == null then return {}
+    ret = {}
+    for line in contents.split(char(10))
+        // Remove leading whitespace
+        while line.len > 0 and line[0] == " "
+            line = line[1:]
+        end while
+        if line.len <= 0 then continue
+        if line[0] == "#" then continue
+        pos = line.indexOf("=")
+        if pos > 0 then
+            ret[line[:pos]] = line[pos+1:]
+        end if
+    end for
+    return ret
+end function
+
+// IsInvalidName Is the name invalid?
+IsInvalidName = function(name)
+    for ch in name.vals
+        cd = ch.code
+        if (cd < IsInvalidName__R1L and cd > IsInvalidName__R1H) and (cd < IsInvalidName__R2L and cd > IsInvalidName__R2H) and (cd < IsInvalidName__R3L and cd > IsInvalidName__R3H) then return true
+    end for
+    return false
+end function
+IsInvalidName__R1L = "a".code
+IsInvalidName__R1H = "z".code
+IsInvalidName__R2L = "A".code
+IsInvalidName__R2H = "Z".code
+IsInvalidName__R3L = "0".code
+IsInvalidName__R3H = "9".code
+
+if locals == globals then main()

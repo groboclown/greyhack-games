@@ -1,0 +1,506 @@
+// For Use with the Multiplayer server.
+
+// TIMING CONSTANTS
+// adjust these to make the game run at an appropriate rate.
+BASE_SPEED = 30
+FRAMES_PER_SECOND = 20
+FREQUENCY = 1.0 / FRAMES_PER_SECOND
+if FREQUENCY <= 0.2 then FREQUENCY = 0.201  // for performance reasons
+
+// =============================================
+// Display + Game Logic Program
+
+DisplayProgram = function(controlFile)
+    // initialize the state for the whole program.
+    state = {
+        "score": 0,
+        "level": 1,
+        "hiscore": 0,
+
+        // Game board
+        "boardWidth": 12,
+        "boardHeight": 10,
+        "border": "",
+        "previewBorder": "",
+        "board": [],
+        "future_bag": [],
+
+        // the falling brick
+        // each piece of the brick has its own position.
+        "brickX": 0,
+        "brickY": 0,
+        "brickShape": 0,
+        "brickRotate": 0,
+        "previewBrick": null,
+
+        // this is basically how hard the game is.
+        "speed": BASE_SPEED,
+        "timer": 0,
+
+        // Controller Bits
+        "last": "",
+        "lastAction": "(start)",
+        "deltax": 0,
+        "deltay": 0,
+        "rotation": 0,
+        "controls": {
+            "LeftArrow": [-1, 0, 0],
+            "RightArrow": [1, 0, 0],
+            "DownArrow": [0, 1, 0],
+            "UpArrow": [0, 0, 1],
+            "z": [0, 0, -1],
+            "x": [0, 0, 1],
+        },
+
+        // Game state
+        "game": 0,
+        "collisionTop": false,
+    }
+    border = char(183)
+    for x in range(0, state.boardWidth)
+        // blocks are 1 tall, 2 characters wide
+        border = border + char(183) + char(183)
+    end for
+    state.border = "<size=1em><color=#909090>" + border + char(183) + "</color></size>"
+    state.previewBorder = "  <size=1em>" + char(183) + char(183) + char(183) + char(183) + char(183) + char(183) + char(183) + char(183) + char(183) + char(183) + "</color></size>"
+
+    HandleInput(controlFile, state)
+
+    while true
+        if state.game == 0 then
+            DoIntro(controlFile, state)
+        else if state.game == 1 then
+            DoFrame(controlFile, state)
+        else
+            break
+        end if
+        DelaySomehow()
+    end while
+end function
+
+BRICK_SHAPES = [
+    // Split into x1, y1, x2, y2, x3, y3, x4, y4
+    //    Per rotation.
+    // Must be centered to allow easy rotation
+    // square.  Does not rotate.
+    [
+        [0, 0, 0, 1, 1, 0, 1, 1],
+        [0, 0, 0, 1, 1, 0, 1, 1],
+        [0, 0, 0, 1, 1, 0, 1, 1],
+        [0, 0, 0, 1, 1, 0, 1, 1],
+    ],
+    // stick
+    [
+        [-2,  1, -1,  1,  0,  1,  1,  1],
+        [-1, -2, -1, -1, -1,  0, -1,  1],
+        [-2,  2, -1,  2,  0,  2,  1,  2],
+        [ 0, -2,  0, -1,  0,  0,  0,  1],
+    ],
+    // L 1
+    [
+        [-1, -1, -1,  0,  0,  0,  1,  0],
+        [ 0, -1,  1, -1,  0,  0,  0,  1],
+        [-1,  0,  0,  0,  1,  0,  1,  1],
+        [-1,  1,  0,  1,  0,  0,  0, -1],
+    ],
+    // L 2
+    [
+        [-1,  0,  0,  0,  1,  0,  1, -1],
+        [ 0, -1,  0,  0,  0,  1,  1,  1],
+        [-1,  1, -1,  0,  0,  0,  1,  0],
+        [-1, -1,  0, -1,  0,  0,  0,  1],
+    ],
+    // T
+    [
+        [-1,  0,  0, -1,  0,  0,  1,  0],
+        [ 0, -1,  0,  0,  0,  1,  1,  0],
+        [-1,  0,  0,  1,  0,  0,  1,  0],
+        [-1,  0,  0, -1,  0,  0,  0,  1],
+    ],
+    // S1
+    [
+        [-1,  0,  0,  0,  0,  1,  1,  1],
+        [ 0, -1,  0,  0, -1,  0, -1,  1],
+        [-1,  0,  0,  0,  0,  1,  1,  1],
+        [ 0, -1,  0,  0, -1,  0, -1,  1],
+    ],
+    // S2
+    [
+        [-1,  1,  0,  1,  0,  0,  1,  0],
+        [-1, -1, -1,  0,  0,  0,  0,  1],
+        [-1,  1,  0,  1,  0,  0,  1,  0],
+        [-1, -1, -1,  0,  0,  0,  0,  1],
+    ],
+]
+BRICK_SHAPE_COLOR = [
+    // square
+    "#1010ff",
+    // stick
+    "#ff1010",
+    // L 1
+    "#00c0c0",
+    // L 2
+    "#c0c000",
+    // T
+    "#406080",
+    // S1
+    "#c000c0",
+    // S2
+    "#806040",
+]
+BRICK_SHAPE_COLOR_PLACED = [
+    // square
+    "#080880",
+    // stick
+    "#800808",
+    // L 1
+    "#006060",
+    // L 2
+    "#606000",
+    // T
+    "#203040",
+    // S1
+    "#600060",
+    // S2
+    "#403020",
+]
+
+// InitBrick Create a new brick at the top of the screen.
+InitBrick = function(state)
+    // Officially, the brick shape is supposed to come from
+    // a large bag, to prevent an infinite ordering of specific
+    // shapes that cause an unsolvable board.
+    // We need at least 1 item in the bag at all times, for the
+    // preview.
+    if state.future_bag.len < 2 then
+        // Fill the bag with a large number of same number items.
+        for i in range(0, BRICK_SHAPES.len - 1)
+            for j in range(0, 20)
+                state.future_bag.push(i)
+            end for
+        end for
+        // Then shuffle it.
+        for i in range(0, state.future_bag.len - 2)
+            // This math should be right...
+            j = floor(rnd() * (state.future_bag.len - i)) + i
+            // But just in case...
+            if j < i then j == i
+            if j >= state.future_bag.len then j = state.future_bag.len - 1
+            x = state.future_bag[j]
+            state.future_bag[j] = state.future_bag[i]
+            state.future_bag[i] = x
+        end for
+    end if
+
+    if state.previewBrick == null then state.previewBrick = state.future_bag.pop()
+
+    state.brickShape = state.previewBrick
+    state.previewBrick = state.future_bag.pop()
+    state.brickRotate = 0
+    state.brickX = floor(state.boardWidth / 2)
+    state.brickY = 1
+end function
+
+// InitGame() Initialize the map to a new game state.
+InitGame = function(state)
+    state.speed = BASE_SPEED - ((state.level - 1) * 10)
+    state.timer = 0
+
+    board = []
+    for y in range(0, state.boardHeight + 1)
+        row = []
+        for x in range(0, state.boardWidth + 1)
+            row.push(null)
+        end for
+        board.push(row)
+    end for
+    state.board = board
+
+    state.future_bag = []
+    state.previewBrick = null
+    InitBrick(state)
+end function
+
+// DrawFrame() Draws one frame of the game.
+DrawFrame = function(state)
+    // Draw screen
+    lines = [
+        "Score: " + state.score + "   Level: " + state.level + "   Hi Score: " + state.hiscore,
+        "Debug: " + state.last + " " + state.lastAction + " " + state.brickY + " " + state.timer,
+        state.border + state.previewBorder,
+    ]
+    previewLines = []
+    brickAdj = BRICK_SHAPES[state.previewBrick][0]
+    color = BRICK_SHAPE_COLOR[state.previewBrick]
+    for y in range(0, 3)
+        line = "  |"
+        for x in range(0, 3)
+            val = "  "
+            for i in range(0, 3)
+                if brickAdj[i * 2] + 1 == x and brickAdj[(i * 2) + 1] + 1 == y then
+                    val = "<mark=" + color + "ff><color=" + color + ">PP</color></mark>"
+                    break
+                end if
+            end for
+            line = line + val
+        end for
+        previewLines.push(line + "|")
+    end for
+    previewLines.push(state.previewBorder)
+    brickAdj = BRICK_SHAPES[state.brickShape][state.brickRotate]
+    color = BRICK_SHAPE_COLOR[state.brickShape]
+    for y in range(0, state.boardHeight)
+        line = "<size=1em>|"
+        for x in range(0, state.boardWidth)
+            val = "  "
+            ex = state.board[y][x]
+            if ex != null then
+                val = "<mark=" + ex + "ff><color=" + ex + ">XX</color></mark>"
+            else
+                for i in range(0, 3)
+                    brickX = state.brickX + brickAdj[i * 2]
+                    brickY = state.brickY + brickAdj[(i * 2) + 1]
+                    if y == brickY and x == brickX then
+                        val = "<mark=" + color + "ff><color=" + color + ">MM</color></mark>"
+                        break
+                    end if
+                end for
+            end if
+            line = line + val
+        end for
+        line = line + "|"
+        if y < previewLines.len then line = line + previewLines[y]
+        lines.push(line)
+    end for
+    lines.push(state.border)
+    //clear_screen
+    // A single print is much faster and reduces flashing.
+    print(lines.join(char(10)), 1)
+end function
+
+// GameStep Perform one frame of physics
+GamePhysicsFrame = function(state)
+    // initial bounds checking to ensure the brick is in the game board.
+    // If the game logic was 100% sound, then this would be unneccessary.
+    brickAdj = BRICK_SHAPES[state.brickShape][state.brickRotate]
+    minX = 99999
+    maxX = -99999
+    minY = 99999
+    maxY = -99999
+    for i in range(0, 3)
+        brickX = state.brickX + brickAdj[i * 2]
+        brickY = state.brickY + brickAdj[(i * 2) + 1]
+        if brickX < minX then minX = brickX
+        if brickX > maxX then maxX = brickX
+        if brickY < minY then minY = brickY
+        if brickY > maxY then maxY = brickY
+    end for
+    if minX < 0 then
+        state.brickX = -minX
+    end if
+    if maxX > state.boardWidth then
+        state.brickX = (2 * state.boardWidth) - maxX
+    end if
+    if minY < 0 then
+        state.brickY = -minY
+    end if
+    if maxY > state.boardHeight then
+        state.brickY = (2* state.boardHeight) - maxY
+    end if
+
+    state.collisionTop = false
+    
+    // Perform gravity based on the timer.
+    state.timer = state.timer - 1
+    if state.timer < 0 then
+        state.timer = state.speed
+
+        // At this point, we check if the + 1 y causes a collision.
+        // Ignore input for left or right.
+        colY = state.boardHeight + 1
+        hasCollision = false
+        brickAdj = BRICK_SHAPES[state.brickShape][state.brickRotate]
+        for i in range(0, 3)
+            brickX = state.brickX + brickAdj[i * 2]
+            // 1 down for gravity
+            brickY = state.brickY + 1 + brickAdj[(i * 2) + 1]
+            if brickY > state.boardHeight or state.board[brickY][brickX] != null then
+                // collision
+                if brickY < colY then colY = brickY
+                hasCollision = true
+            end if
+        end for
+        if hasCollision then
+            state.collisionTop = colY
+            return
+        end if
+
+        // No direct collision, so keep going in physics.
+        // But make affected by gravity.
+        // There's at most 1 y change at once.
+        state.deltay = 1
+    end if
+
+    // Perform movements first on a temporary object.  This allows rotations to
+    // also happen.  If the temporary object doesn't have collisions, then allow
+    // the movement.
+    tmpRotate = state.brickRotate + state.rotate
+    if tmpRotate < 0 then tmpRotate = 3
+    if tmpRotate > 3 then tmpRotate = 0
+    tmpX = state.brickX + state.deltax
+    tmpY = state.brickY + state.deltay
+
+    // Perform collision check - is there an overlap with the board?
+    canMove = true
+    brickAdj = BRICK_SHAPES[state.brickShape][tmpRotate]
+    for i in range(0, 3)
+        brickX = tmpX + brickAdj[i * 2]
+        brickY = tmpY + brickAdj[(i * 2) + 1]
+        if brickX < 0 or brickX > state.boardWidth then
+            canMove = false
+            break
+        end if
+        if brickY < 0 or brickY > state.boardWidth then
+            canMove = false
+            break
+        end if
+        if state.board[brickY][brickX] != null then
+            canMove = false
+            break
+        end if
+    end for
+
+    if canMove then
+        state.brickRotate = tmpRotate
+        state.brickX = tmpX
+        state.brickY = tmpY
+    end if
+end function
+
+// GameSystems() Check the state of the game for status adjustments
+//
+// This is the rules enforcement system and scoring system.
+GameSystems = function(state)
+    if state.collisionTop != false then
+        // There was a collision.
+        if state.collisionTop <= 1 then
+            // End of game.
+            state.game = 0
+            return
+        end if
+
+        // Place the brick onto the board.
+        brickAdj = BRICK_SHAPES[state.brickShape][state.brickRotate]
+        for i in range(0, 3)
+            brickX = state.brickX + brickAdj[i * 2]
+            brickY = state.brickY + brickAdj[(i * 2) + 1]
+            state.board[brickY][brickX] = BRICK_SHAPE_COLOR_PLACED[state.brickShape]
+        end for
+
+        // Check for line removals
+        removedLines = 0
+        for y in range(1, state.boardHeight)
+            allExist = true
+            for x in range(0, state.boardWidth)
+                if state.board[y][x] == null then
+                    allExist = false
+                    break
+                end if
+            end for
+            if allExist then
+                removedLines = removedLines + 1
+                up = y - 1
+                while up >= 0
+                    for x in range(0, state.boardWidth)
+                        state.board[up + 1][x] = state.board[up][x]
+                    end for
+                    up = up - 1
+                end while
+                // Because this is moving down, it doesn't
+                // need to be checked again.
+            end if
+        end for
+        
+        // Adjust score + level
+        state.score = state.score + (removedLines * 4)
+        if state.score > state.hiscore then state.hiscore = state.score
+        state.level = floor(state.score / 20) + 1
+        state.speed = BASE_SPEED - ((state.level - 1) * floor(BASE_SPEED / 12))
+
+        // Create a new brick.
+        InitBrick(state)
+    end if
+end function
+
+// HandleInput() Handle the input controls
+HandleInput = function(controlFile, state)
+    state.deltax = 0
+    state.deltay = 0
+    state.rotate = 0
+
+    cmd = controlFile.get_content
+    pos = cmd.indexOf("|")
+    if pos == null then return  // no input
+    idx = val[:pos]
+    if cmd[pos+1] != "!" then return  // not key mode
+    part = cmd[pos+2:]
+    if part == "Esc" then exit("Player quit")
+
+    if idx != state.last then
+        // handle new command
+        state.last = idx
+        state.lastAction = part
+        if state.controls.hasIndex(state.lastAction) then
+            changes = state.controls[state.lastAction]
+            state.deltax = changes[0]
+            state.deltay = changes[1]
+            state.rotate = changes[2]
+        end if
+    end if
+end function
+
+// DoFrame() Handle the per-frame pipeline.
+DoFrame = function(controlFile, state)
+    // Handle Input.  This affects the physics.
+    HandleInput(controlFile, state)
+
+    // Increment time + physics
+    GamePhysicsFrame(state)
+    
+    // Game systems for the frame
+    GameSystems(state)
+
+    // Render pipeline
+    DrawFrame(state)
+end function
+
+// DoIntro
+DoIntro = function(controlFile, state)
+    last = state.last
+    HandleInput(controlFile, state)
+    if state.game >= 0 and last != state.last then
+        // start the game
+        state.game = 1
+        InitGame(state)
+    end if
+
+    // Could have something flashy
+    clear_screen
+    print("Falling Blocks for Grey Hack")
+    print("Control in the control terminal.")
+    print("Press 'ESC' in the control terminal to exit.")
+    print("Press any other key to start.")
+end function
+
+DelaySomehow = function()
+    // If this is > 0.2 (say, 0.201), then the
+    // print(foo, 1)
+    // will properly clear the screen and cut out lots of
+    // flashing.
+    wait(FREQUENCY)
+end function
+
+
+// =============================================
+// Program Picker
+DisplayProgram(get_custom_object.controller)

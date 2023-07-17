@@ -1,0 +1,10 @@
+<color=#00a0a0>Falling Bricks
+<color=#20a020>A Single Player Game
+
+<color=#808080>Clear out rows of blocks as new ones keep appearing.
+
+Control with the controller window.  It needs to be in key mode:
+
+  * <color=#808000>Left</color> and <color=#808000>Right</color> arrow keys to move the block left and right;
+  * <color=#808000>Down</color> arrow key to advance the block down a row;
+  * <color=#808000>Up</color> arrow key to rotate, as well as the <color=#808000>z</color> and <color=#808000>x</color> keys.
