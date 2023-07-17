@@ -17,6 +17,16 @@ service=(service name, one of 'ftp' or 'ssh')
 dir=(server's absolute game directory)
 ```
 
+First, you launch the `controller` program in one terminal.
+
+Second, you launch the `lobby` program in a second terminal as:
+
+```bash
+$ lobby configfile.txt MyHandle
+```
+
+You interact with the lobby through the controller terminal.  *Make sure you disconnect nicely, or you won't be able to log in again under that handle without some server surgery.*
+
 (TODO include instructions for interacting in the lobby, joining a game, and hosting a game)
 
 ## Running a Game Lobby Server

@@ -51,7 +51,7 @@ GameLib.NextCommand = function()
     pos = val.indexOf("|")
     if pos == null then return null
     idx = val[:pos]
-    if idx != ret.ctrlIdx then
+    if idx != self.ctrlIdx then
         // New command
         self.ctrlIdx = idx
         if val[pos+1] == "!" then return [1, val[pos+2:]]
@@ -107,7 +107,7 @@ end function
 // Returns a string on error, null on no error.
 GameLib.Post = function(message, ref = null)
     if self.server == null then return "not connected"
-    if message.indexOf(GameServer.msgStart) != null then return "invalid message content"
+    if message.indexOf(GameServer.msgSep) != null then return "invalid message content"
     if ref == null then ref = self.PlayerName
     idx = 0
     if self.postId.hasIndex(ref) then idx = self.postId[ref]

@@ -4,7 +4,7 @@
 CONTROLLER_FILENAME = home_dir + "/.controller.txt"
 IMPORT_BIN = home_dir + "/bin/import"
 DOWNLOAD_DIR = home_dir + "/Downloads"
-
+WAIT_TIME = 1.0
 
 CONTROLLER_FILE = get_shell.host_computer.File(CONTROLLER_FILENAME)
 if CONTROLLER_FILE == null then
@@ -14,7 +14,6 @@ end if
 if CONTROLLER_FILE == null or CONTROLLER_FILE.is_binary then
     exit("Could not set up controller file " + CONTROLLER_FILENAME)
 end if
-
 
 main = function()
     if params.len != 2 or params.indexOf("-h") != null or params.indexOf("--help") != null then
@@ -30,6 +29,22 @@ main = function()
     if IsInvalidName(userHandle) then
         exit("Invalid user handle.  It must be alpha-numeric (a-z, A-Z, 0-9)")
     end if
+
+    ctrlIdx = ""
+    NextCommand = function()
+        val = CONTROLLER_FILE.get_content
+        if val == "exit" then return [2, ""]
+        pos = val.indexOf("|")
+        if pos == null then return null
+        idx = val[:pos]
+        if idx != outer.ctrlIdx then
+            // New command
+            outer.ctrlIdx = idx
+            if val[pos+1] == "!" then return [1, val[pos+2:]]
+            return [0, val[pos+2:]]
+        end if
+        return null
+    end function
 
     server = GameServer.LoadFrom(params[0])
     if server == null then exit("Failed to load server configuration.")
@@ -49,10 +64,68 @@ main = function()
                     print("Failed to connect to lobby. Someone else may already be using your handle.")
                     return
                 end if
+                // First time.  Refresh the screen with the lobby stuff.
+                print("<color=#008080>Entering lobby.  Current members: " + lobby.GetMembers)
+                print("Enter '/help' in your controller terminal for help.")
             end if
-            // TODO pull messages and possibly refresh screen
-            // TODO check controller state
-            // TODO wait if nothing to do based on controller state.
+            // Pull messages and post them
+            for message in lobby.PullMessages
+                // TODO assign each player a unique number.
+                when = message[0]
+                name = message[1]
+                msg = message[2]
+                if name == "/game/" then
+                    print("G:<color=#f08040>" + msg)
+                else if msg[:7] == "/emote " then
+                    print("P:<color=#808000>" + name + " (" + when + ") <italic><noparse>" + msg[7:])
+                else
+                    print("P:<color=#808000>" + name + " (" + when + "): <noparse>" + msg)
+                end if
+            end for
+            cmd = NextCommand()
+            if cmd != null and cmd[0] == 2 then
+                lobby.Disconnect()
+                exit("Controller quit.  Quitting lobby, too.")
+            end if
+            if cmd != null and cmd[0] == 0 then
+                req = cmd[1]
+                if req[:7] == "/about " then
+                    // TODO describe game
+                else if req == "/users" then
+                    // TODO this should also fetch when the user last posted.
+                    print(lobby.GetMembers)
+                else if req == "/games" then
+                    // TODO list available games
+                    print("TODO list games")
+                else if req[:6] == "/list " then
+                    // TODO list pending instances for the game
+                    print("TODO list pending instances")
+                else if req[:6] == "/host " then
+                    // TODO host the game, name
+                    print("TODO host the game instance")
+                else if req[:6] == "/join " then
+                    // TODO join the game, name
+                    print("TODO join the game instance")
+                else if req == "/quit" then
+                    lobby.Disconnect()
+                    exit("Quitting the lobby.")
+                else if req == "/help" then
+                    print("Type in text to have it be posted to the lobby.")
+                    print("You can also use 'slash' commands, like this /help command.")
+                    print("Supported commands:")
+                    print("  <color=#808080>/help</color>     This text.")
+                    print("  <color=#808080>/quit</color>     Quit the lobby.")
+                    print("  <color=#808080>/games</color>    List the games available on the server.")
+                    print("  <color=#808080>/users</color>    List the users in the lobby.")
+                    print("  <color=#808080>/list (game)</color>  List the pending instances for the game, waiting for players.")
+                    print("  <color=#808080>/about (game)</color>  Describe the game.")
+                    print("  <color=#808080>/join (game) (instance)</color>  Join the pending game with the given instance name.")
+                    print("  <color=#808080>/host (game) (instance)</color>  Host a new game with the given instance name.")
+                end if
+            else
+                // wait if nothing to do based on controller state.
+                wait(WAIT_TIME)
+            end if
         else if state == 1 then
             // In the pending game
             if joinedGame == null then
@@ -172,7 +245,7 @@ GameServer.msgSep = char(1)
 GameServer.maxQueueLen = 100
 GameServer.post = function(location, action)
     if self.server == null then return "not connected"
-    if action.indexOf(GameServer.msgStart) != null then return "invalid message content"
+    if action.indexOf(GameServer.msgSep) != null then return "invalid message content"
     if not location isa list or location.len != 2 then exit("post: Invalid API usage")
     locStr = location[0] + "/" + location[1]
     if not self.sendId.hasIndex(locStr) then self.sendId[locStr] = 0
@@ -235,7 +308,7 @@ GameServer.listIn = function(dirLocation)
     if file == null or not file.is_folder then return []
     ret = []
     for child in file.get_files
-        ret.append(child)
+        ret.push(child)
     end for
     return ret
 end function
@@ -247,7 +320,7 @@ GameServer.listDirsIn = function(dirLocation)
     if file == null or not file.is_folder then return []
     ret = []
     for child in file.get_folders
-        ret.append(child)
+        ret.push(child)
     end for
     return ret
 end function
@@ -329,11 +402,11 @@ end function
 //    Creation returns either a string (meaning error) or an object.
 GameServer.ChatRoom = {}
 GameServer.ChatRoom.mk = function(server, roomDir, playerName, force)
-    if IsInvalidName(playerName) then return "invalid player name '" + playerName + "'"
+    if IsInvalidName(playerName) then return null
     userFile = server.mkFilename(roomDir, playerName)
     if not force then
         file = server.getExistingFile(userFile)
-        if file != null then return "player already in the chat room"
+        if file != null then return null
     end if
     res = server.post(userFile, "Joins")
     if res != null then return res
@@ -441,6 +514,12 @@ GameServer.Lobby.Disconnect = function()
     self.chatRoom = null
     self.server = null
     self.KnownGames = {}
+end function
+
+// Lobby.GetMembers Get the members in the lobby.
+GameServer.Lobby.GetMembers = function()
+    if self.chatRoom == null then return []
+    return self.chatRoom.ListPlayers()
 end function
 
 // Lobby.PullMessages Pull messages from players and pending game state changes.
@@ -927,7 +1006,7 @@ end function
 
 // IsInvalidName Is the name invalid?
 IsInvalidName = function(name)
-    for ch in name.vals
+    for ch in name.values
         cd = ch.code
         if (cd < IsInvalidName__R1L and cd > IsInvalidName__R1H) and (cd < IsInvalidName__R2L and cd > IsInvalidName__R2H) and (cd < IsInvalidName__R3L and cd > IsInvalidName__R3H) then return true
     end for
