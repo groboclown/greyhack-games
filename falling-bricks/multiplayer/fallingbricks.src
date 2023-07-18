@@ -2,7 +2,7 @@
 
 // TIMING CONSTANTS
 // adjust these to make the game run at an appropriate rate.
-BASE_SPEED = 30
+BASE_SPEED = 15
 FRAMES_PER_SECOND = 20
 FREQUENCY = 1.0 / FRAMES_PER_SECOND
 if FREQUENCY <= 0.2 then FREQUENCY = 0.201  // for performance reasons
@@ -441,10 +441,11 @@ HandleInput = function(controlFile, state)
     cmd = controlFile.get_content
     pos = cmd.indexOf("|")
     if pos == null then return  // no input
-    idx = val[:pos]
+    idx = cmd[:pos]
+    // print("idx [" + idx + "] ; type [" + cmd[pos+1] + "] part [" + cmd[pos+2:] + "]")
     if cmd[pos+1] != "!" then return  // not key mode
     part = cmd[pos+2:]
-    if part == "Esc" then exit("Player quit")
+    if part == "Escape" then exit("Player quit")
 
     if idx != state.last then
         // handle new command

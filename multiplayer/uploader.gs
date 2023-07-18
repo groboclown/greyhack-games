@@ -67,7 +67,7 @@ main = function()
         if hostFile == null or hostFile.is_binary then exit("Invalid game directory setup; host source file is invalid: '" + gameInfo.gameDir + "/" + gameInfo.Host + "'")
     end if
 
-    remoteGameDir = server.gameDir + "/Games/" + gameInfo.SimpleName
+    remoteGameDir = server.serverRootDir + "/Games/" + gameInfo.SimpleName
     server.AddFile(remoteGameDir, "about.txt", aboutFile)
     server.AddFile(remoteGameDir, "gameinfo.txt", infoFile)
     server.AddFile(remoteGameDir, gameInfo.Client, clientFile)
@@ -93,21 +93,23 @@ GameServer.LoadFrom = function(filename)
     passwd = "guest"
     port = 21
     service = "ftp"
-    gameDir = "/home/guest"
+    serverRootDir = "/home/guest"
     if props.hasIndex("ip") then addr = props.ip
     if props.hasIndex("username") then username = props.username
     if props.hasIndex("password") then passwd = props.password
     if props.hasIndex("port") then port = props.port
     if props.hasIndex("service") then service = props.service
-    if props.hasIndex("dir") then gameDir = props.dir
+    if props.hasIndex("dir") then serverRootDir = props.dir
     if addr == null then
         print("No 'ip' field set in the game property file '" + filename + "'")
         return null
     end if
-    return GameServer.mk(addr, username, passwd, port, service, gameDir)
+    return GameServer.Server.mk(addr, username, passwd, port, service, serverRootDir)
 end function
-GameServer.mk = function(addr, username, passwd, port, service, gameDir)
-    ret = new GameServer
+
+GameServer.Server = {}
+GameServer.Server.mk = function(addr, username, passwd, port, service, serverRootDir)
+    ret = new GameServer.Server
     // GameName The game's name, so that the player only interacts with people in the same game.
     ret.addr = addr
     ret.username = username
@@ -115,7 +117,7 @@ GameServer.mk = function(addr, username, passwd, port, service, gameDir)
     if port isa string then port = port.to_int
     ret.port = port
     ret.service = service
-    ret.gameDir = gameDir
+    ret.serverRootDir = serverRootDir
     ret.server = null
     ret.queue = {}
     ret.sendId = {}
@@ -124,8 +126,8 @@ GameServer.mk = function(addr, username, passwd, port, service, gameDir)
     return ret
 end function
 
-// Connect Connect to the server.  Returns a string on error, and null on okay.
-GameServer.Connect = function(user=null, passwd=null)
+// Server.Connect Connect to the server.  Returns a string on error, and null on okay.
+GameServer.Server.Connect = function(user=null, passwd=null)
     if user == null then user = self.username
     if passwd == null then passwd = self.passwd
     if self.server == null then
@@ -203,7 +205,7 @@ end function
 
 // --------------
 // Custom stuff on top of the game server.
-GameServer.AddFile = function(dirName, fileName, localFile)
+GameServer.Server.AddFile = function(dirName, fileName, localFile)
     if self.server == null then return "not connected"
     print("DEBUG Getting server directory '" + dirName + "'")
     parent = self.server.host_computer.File(dirName)
