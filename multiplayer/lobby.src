@@ -641,7 +641,10 @@ GameServer.ChatRoom.mk = function(server, roomDir, playerName, force)
         if file != null then return null
     end if
     res = server.post(userFile, "Joins")
-    if res != null then return res
+    if res != null then
+        print("Error joining chatroom: " + res)
+        return null
+    end if
 
     ret = new GameServer.ChatRoom
     ret.playerName = playerName
