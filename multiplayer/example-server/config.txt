@@ -1,0 +1,8 @@
+# By specifying 'ip=localhost', it puts the client into a special
+# localhost only mode.
+ip=localhost
+username=player
+password=player
+# port=21
+# service=ftp
+dir=/gameserver

@@ -1,0 +1,20 @@
+[
+    {
+        "type": "about",
+        "description": [
+            "Client binaries for connecting to a multiplayer lobby server.",
+            "This creates bin/mpctrl as the controller and bin/mplby as the lobby display."
+        ]
+    },
+    {
+        "type": "compile",
+        "local": "controller.src",
+        "target": "~/bin/mpctrl"
+    },
+    {
+        "type": "compile",
+        "local": "lobby.src",
+        "target": "~/bin/mplby"
+    }
+
+]

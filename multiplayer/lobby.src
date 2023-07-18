@@ -50,11 +50,15 @@ main = function()
     if server == null then exit("Failed to load server configuration.")
     res = server.Connect()
     if res != null then exit("Failed to connect to server: " + res)
+    print("<color=#aaaaaa><i>Connected to " + server.addr + ":" + server.port)
+    print("<color=#f08040>" + server.About)
 
     state = 0
     lobby = null
     joinedGame = null
     while true
+        // ............................................................
+        // Lobby
         if state == 0 then
             // In the lobby
             if joinedGame != null then joinedGame.Leave()
@@ -75,11 +79,11 @@ main = function()
                 name = message[1]
                 msg = message[2]
                 if name == "/game/" then
-                    print("G:<color=#f08040>" + msg)
+                    print("G:<color=#10ff60>" + msg)
                 else if msg[:7] == "/emote " then
-                    print("P:<color=#808000>" + name + " (" + when + ") <italic><noparse>" + msg[7:])
+                    print("P:<color=#808000>" + name + " (" + when + ") <i><noparse>" + msg[7:] + "</noparse>")
                 else
-                    print("P:<color=#808000>" + name + " (" + when + "): <noparse>" + msg)
+                    print("P:<color=#808000>" + name + " (" + when + "): <noparse>" + msg + "</noparse>")
                 end if
             end for
             cmd = NextCommand()
@@ -87,29 +91,120 @@ main = function()
                 lobby.Disconnect()
                 exit("Controller quit.  Quitting lobby, too.")
             end if
-            if cmd != null and cmd[0] == 0 then
+            if cmd != null and cmd[0] == 0 and cmd[1] != "" then
                 req = cmd[1]
-                if req[:7] == "/about " then
-                    // TODO describe game
-                else if req == "/users" then
+                words = Words(req)
+                // ----------------------------------------------------
+                // Describe a game
+                if words[0] == "/about" then
+                    if words.len != 2 then
+                        print("<color=#ff5060><i>Usage: /about (game name)")
+                    else
+                        game = server.GetGame(words[1])
+                        if game == null then
+                            print("<color=#ff5060><i>Unknown game '" + words[1] + "'; use '/games' to list known games")
+                        else
+                            print("<color=#20ff20><noparse>" + game.Name + "</noparse>")
+                            print("<color=#808080>  Player count: " + game.MinPlayers + " - " + game.MaxPlayers)
+                            if game.About != null then print(game.About)
+                        end if
+                    end if
+    
+                // ----------------------------------------------------
+                // List Users
+                else if words[0] == "/users" then
                     // TODO this should also fetch when the user last posted.
                     print(lobby.GetMembers)
-                else if req == "/games" then
-                    // TODO list available games
-                    print("TODO list games")
-                else if req[:6] == "/list " then
-                    // TODO list pending instances for the game
-                    print("TODO list pending instances")
-                else if req[:6] == "/host " then
-                    // TODO host the game, name
-                    print("TODO host the game instance")
-                else if req[:6] == "/join " then
-                    // TODO join the game, name
-                    print("TODO join the game instance")
-                else if req == "/quit" then
+                
+                // ----------------------------------------------------
+                // List Games
+                else if words[0] == "/games" then
+                    for gameName in server.KnownGames.indexes
+                        game = server.KnownGames[gameName]
+                        msg = "<color=#20ff20><noparse>" + game.Name + "</noparse></color> (" + gameName + ")"
+                        if game.Description != null then msg = msg + " <color=#a0a0a0>" + game.Description
+                        print(msg)
+                    end for
+
+                // ----------------------------------------------------
+                // List Instances
+                else if words[0] == "/list" then
+                    if words.len != 2 then
+                        print("<color=#ff5060><i>Usage: /list (game name)")
+                    else
+                        game = server.GetGame(words[1])
+                        if game == null then
+                            print("<color=#ff5060><i>Unknown game '" + words[1] + "'; use '/games' to list known games")
+                        else
+                            for instanceName in game.PendingGames.indexes
+                                msg = "<color=#6060ff><i><noparse>" + instanceName + "</noparse></color> "
+                                instance = game.PendingGame[instanceName]
+                                status = instance.Status
+                                statusMsg = "<color=#20ff20>Waiting for players</color>"
+                                if status == "full" then statusMsg = "<color=#606080>Instance full</color>"
+                                if status == "abandoned" then statusMsg = "<color=#404040>Abandonded</color>"
+                                if status == "starting" then statusMsg = "<color=#806060>Starting</color>"
+                                print(msg + statusMsg)
+                            end for
+                        end if
+                    end if
+
+                // ----------------------------------------------------
+                // Host a new instance
+                else if words[0] == "/host" then
+                    if words.len != 3 then
+                        print("<color=#ff5060><i>'/host' usage: /host game-name instance-name")
+                    else
+                        game = server.GetGame(words[1])
+                        if game == null then
+                            print("<color=#ff5060><i>Unknown game '" + words[1] + "'; use '/games' to list known games")
+                        else
+                            joinedGame = game.HostGame(words[2], userHandle)
+                            if joinedGame == null then
+                                print("<color=#ff5060><i>Failed to host game")
+                            else
+                                state = 1
+                                print("<color=#20ff40>Hosting Game " + game.Name + ", instance " + joinedGame.InstanceName)
+                                lobby.PostMessage("/emote started game " + game.Name + " instance " + joinedGame.InstanceName)
+                                lobby.Disconnect()
+                                lobby = null
+                            end if
+                        end if
+                    end if
+
+                // ----------------------------------------------------
+                // Join an instance
+                else if words[0] == "/join" then
+                    if words.len != 3 then
+                        print("<color=#ff5060><i>'/join' usage: /join gameName instanceName")
+                    else
+                        game = server.GetGame(words[1])
+                        if game == null then
+                            print("<color=#ff5060><i>Unknown game '" + words[1] + "'; use '/games' to list known games")
+                        else
+                            joinedGame = game.JoinGame(words[2], userHandle)
+                            if joinedGame == null then
+                                print("<color=#ff5060><i>Failed to join game")
+                            else
+                                state = 2
+                                print("<color=#20ff40>Joined Game " + game.Name + ", instance " + joinedGame.InstanceName)
+                                lobby.Disconnect()
+                                lobby = null
+                            end if
+                        end if
+                    end if
+
+                // ----------------------------------------------------
+                // Quit the lobby / server.
+                else if words[0] == "/quit" then
                     lobby.Disconnect()
+                    lobby = null
+                    state = -1
                     exit("Quitting the lobby.")
-                else if req == "/help" then
+
+                // ----------------------------------------------------
+                // Help
+                else if words[0] == "/help" then
                     print("Type in text to have it be posted to the lobby.")
                     print("You can also use 'slash' commands, like this /help command.")
                     print("Supported commands:")
@@ -121,21 +216,130 @@ main = function()
                     print("  <color=#808080>/about (game)</color>  Describe the game.")
                     print("  <color=#808080>/join (game) (instance)</color>  Join the pending game with the given instance name.")
                     print("  <color=#808080>/host (game) (instance)</color>  Host a new game with the given instance name.")
+                
+                // ----------------------------------------------------
+                // Post a message
+                else
+                    lobby.PostMessage(req)
+                    print("<color=#ffffff><noparse>:: " + req + "</noparse>")
                 end if
             else
                 // wait if nothing to do based on controller state.
                 wait(WAIT_TIME)
             end if
-        else if state == 1 then
+
+        // ............................................................
+        // Hosted (1) or Joined (2) Game
+        else if state == 1 or state == 2 then
             // In the pending game
             if joinedGame == null then
                 if lobby != null then lobby.Disconnect()
                 exit("Bad state: joined game is null")
             end if
+            // Pull messages and post them
+            for message in joinedGame.PullMessages
+                // TODO assign each player a unique number.
+                when = message[0]
+                name = message[1]
+                msg = message[2]
+                if name == "/game/" then
+                    print("G:<color=#10ff60>" + msg)
+                else if msg[:7] == "/emote " then
+                    print("P:<color=#808000>" + name + " (" + when + ") <i><noparse>" + msg[7:] + "</noparse>")
+                else
+                    print("P:<color=#808000>" + name + " (" + when + "): <noparse>" + msg + "</noparse>")
+                end if
+            end for
 
-            // TODO pull messages and possibly refresh screen
-            // TODO check controller state
-            // TODO wait if nothing to do based on controller state.
+            if joinedGame.InstanceStatus == "active" and not joinedGame.IsHosting then
+                // Game has started.  Need to join the game.
+                print("Joining the game in progress.")
+                joinedGame.Launch()
+                joinedGame.Disconnect()
+                joinedGame = null
+                print("Entering the lobby.")
+                state = 0
+            end if
+
+            cmd = NextCommand()
+            if cmd != null and cmd[0] == 2 then
+                joinedGame.Disconnect()
+                joinedGame = null
+                state = -1
+                exit("Controller quit.  Quitting the joined game, too.")
+            end if
+            if cmd != null and cmd[0] == 0 then
+                req = cmd[1]
+                words = Words(req)
+                // ----------------------------------------------------
+                // Describe a game
+                if words[0] == "/about" then
+                    game = joinedGame.Game
+                    print("<color=#20ff20><noparse>" + game.Name)
+                    print("<color=#808080>  Player count: " + game.MinPlayers + " - " + game.MaxPlayers)
+                    if game.About != null then print(game.About)
+
+                // ----------------------------------------------------
+                // Leave for the lobby
+                else if words[0] == "/leave" or words[0] == "/lobby" then
+                    joinedGame.PostMessage("/emote left the instance.")
+                    joinedGame.Disconnect()
+                    state = 0
+
+                // ----------------------------------------------------
+                // Start the game
+                else if words[0] == "/start" and joinedGame.IsHosting then
+                    res = joinedGame.CanStart
+                    if res != null then
+                        print("<color=#ff5060><i>Cannot start the game: " + res)
+                    else
+                        joinedGame.Launch()
+                        joinedGame.Disconnect()
+                        joinedGame = null
+                        state = 0
+                    end if
+
+                // ----------------------------------------------------
+                // TODO /users list people in the pending game + their status.
+                // ----------------------------------------------------
+
+                // ----------------------------------------------------
+                // Help
+                else if req == "/help" then
+                    print("Type in text to have it be posted to the lobby.")
+                    print("You can also use 'slash' commands, like this /help command.")
+                    print("Supported commands:")
+                    print("  <color=#808080>/help</color>     This text.")
+                    print("  <color=#808080>/leave</color>    Leave this pending game and go back to the lobby.")
+                    print("  <color=#808080>/lobby</color>    Leave this pending game and go back to the lobby.")
+                    print("  <color=#808080>/quit</color>     Quit the server.")
+                    print("  <color=#808080>/about</color>    Describe this game.")
+                    print("  <color=#808080>/status (status)</color>  Set your status.  Used to indicate whether you're ready to play.")
+                    if joinedGame.IsHosting then
+                        print("  <color=#808080>/start</color>  Start the game (host only)")
+                    end if
+
+                // ----------------------------------------------------
+                // Quit the lobby / server.
+                else if req == "/quit" then
+                    joinedGame.Disconnect()
+                    joinedGame = null
+                    state = -1
+                    exit("Quitting the server.")
+
+                // ----------------------------------------------------
+                // Post a message
+                else
+                    joinedGame.PostMessage(req)
+                    print("<color=#ffffff><noparse>:: " + req + "</noparse>")
+                end if
+            else
+                // wait if nothing to do based on controller state.
+                wait(WAIT_TIME)
+            end if
+
+        // ............................................................
+        // Unknown state; quit.
         else
             if joinedGame != null then joinedGame.Leave()
             if lobby != null then lobby.Disconnect()
@@ -163,21 +367,23 @@ GameServer.LoadFrom = function(filename)
     passwd = "guest"
     port = 21
     service = "ftp"
-    gameDir = "/home/guest"
+    serverRootDir = "/home/guest"
     if props.hasIndex("ip") then addr = props.ip
     if props.hasIndex("username") then username = props.username
     if props.hasIndex("password") then passwd = props.password
     if props.hasIndex("port") then port = props.port
     if props.hasIndex("service") then service = props.service
-    if props.hasIndex("dir") then gameDir = props.dir
+    if props.hasIndex("dir") then serverRootDir = props.dir
     if addr == null then
         print("No 'ip' field set in the game property file '" + filename + "'")
         return null
     end if
-    return GameServer.mk(addr, username, passwd, port, service, gameDir)
+    return GameServer.Server.mk(addr, username, passwd, port, service, serverRootDir)
 end function
-GameServer.mk = function(addr, username, passwd, port, service, gameDir)
-    ret = new GameServer
+
+GameServer.Server = {}
+GameServer.Server.mk = function(addr, username, passwd, port, service, serverRootDir)
+    ret = new GameServer.Server
     // GameName The game's name, so that the player only interacts with people in the same game.
     ret.addr = addr
     ret.username = username
@@ -185,7 +391,7 @@ GameServer.mk = function(addr, username, passwd, port, service, gameDir)
     if port isa string then port = port.to_int
     ret.port = port
     ret.service = service
-    ret.gameDir = gameDir
+    ret.serverRootDir = serverRootDir
     ret.server = null
     ret.queue = {}
     ret.sendId = {}
@@ -194,8 +400,8 @@ GameServer.mk = function(addr, username, passwd, port, service, gameDir)
     return ret
 end function
 
-// Connect Connect to the server.  Returns a string on error, and null on okay.
-GameServer.Connect = function(user=null, passwd=null)
+// Server.Connect Connect to the server.  Returns a string on error, and null on okay.
+GameServer.Server.Connect = function(user=null, passwd=null)
     if user == null then user = self.username
     if passwd == null then passwd = self.passwd
     if self.server == null then
@@ -212,16 +418,42 @@ GameServer.Connect = function(user=null, passwd=null)
     return null
 end function
 
-// EnterLobby Connect to the lobby.  Returns a string on error or the Lobby object.
-GameServer.EnterLobby = function(playerName, force=false)
+// Server.About Get the game server's basic description.
+GameServer.Server.About = function()
+    if self.server == null then return "(unconnected)"
+    file = self.server.host_computer.File(self.serverRootDir + "/about.txt")
+    if file == null then return "Basic Multiplayer Game Server"
+    ret = file.get_content
+    if ret == null then return "(can't access server files)"
+    return ret
+end function
+
+// Server.EnterLobby Connect to the lobby.  Returns a string on error or the Lobby object.
+GameServer.Server.EnterLobby = function(playerName, force=false)
     return GameServer.Lobby.mk(self, playerName, force)
 end function
 
-// FetchGames Get a map of all games on the server.
-GameServer.FetchGames = function()
-    if self.server == null or self.server.server == null then return {}
+// Server.GetGame Match the game name against the known list.
+//
+// Will only fetch games if the list is empty.
+GameServer.Server.GetGame = function(gameName)
+    known = self.KnownGames
+    words = Words(gameName)
+    if words.len != 1 then return null
+    gameName = words[0].lower
+    if known.hasIndex(gameName) then return known[gameName]
+    for simpleName in known.indexes
+        game = known[simpleName]
+        if gameName == game.Name.lower then return game
+    end for
+    return null
+end function
+
+// Server.FetchGames Get a map of all games on the server.
+GameServer.Server.FetchGames = function()
+    if self.server == null then return {}
     self.knownGames = {}
-    for item in self.server.listDirsIn(self.gameDir)
+    for item in self.listDirsIn(self.serverRootDir + "/Games")
         gameName = item.name
         gameDir = item.path
         aboutFile = self.server.host_computer.File(gameDir + "/about.txt")
@@ -229,21 +461,21 @@ GameServer.FetchGames = function()
         if aboutFile == null or infoFile == null then continue
         game = GameServer.GameInfo.mk(self, aboutFile, infoFile)
         if game != null then
-            self.knownGames[game.SimpleName] = game
+            self.knownGames[game.SimpleName.lower] = game
         end if
     end for
     return self.knownGames
 end function
 
-// KnownGames Get the map of simple name to game info.
-GameServer.KnownGames = function()
+// Server.KnownGames Get the map of simple name to game info.
+GameServer.Server.KnownGames = function()
     if self.knownGames.len <= 0 then self.FetchGames
     return self.knownGames
 end function
 
 GameServer.msgSep = char(1)
 GameServer.maxQueueLen = 100
-GameServer.post = function(location, action)
+GameServer.Server.post = function(location, action)
     if self.server == null then return "not connected"
     if action.indexOf(GameServer.msgSep) != null then return "invalid message content"
     if not location isa list or location.len != 2 then exit("post: Invalid API usage")
@@ -266,7 +498,7 @@ GameServer.post = function(location, action)
     return null
 end function
 
-GameServer.closePost = function(location)
+GameServer.Server.closePost = function(location)
     if not location isa list or location.len != 2 then exit("post: Invalid API usage")
     locStr = location[0] + "/" + location[1]
     if self.queue.hasIndex(locStr) then self.queue.remove(locStr)
@@ -274,13 +506,13 @@ GameServer.closePost = function(location)
     self.rmFile(location)
 end function
 
-GameServer.pull = function(location)
+GameServer.Server.pull = function(location)
     // pull all available messages from the location since the last pull.
     if not location isa list or location.len != 2 then exit("post: Invalid API usage")
     if self.server == null then return []
     locStr = location[0] + "/" + location[1]
     maxRecvId = -1
-    if self.recvId.hasIndex(locStr) then maxRecvId = -1
+    if self.recvId.hasIndex(locStr) then maxRecvId = self.recvId[locStr]
     prevRecvId = maxRecvId
     file = self.getExistingFile(location)
     if file == null then return []
@@ -301,7 +533,7 @@ GameServer.pull = function(location)
     return ret
 end function
 
-GameServer.listIn = function(dirLocation)
+GameServer.Server.listIn = function(dirLocation)
     if self.server == null then return []
     if dirLocation isa list then dirLocation = dirLocation[0] + "/" + dirLocation[1]
     file = self.server.host_computer.File(dirLocation)
@@ -313,7 +545,7 @@ GameServer.listIn = function(dirLocation)
     return ret
 end function
 
-GameServer.listDirsIn = function(dirLocation)
+GameServer.Server.listDirsIn = function(dirLocation)
     if self.server == null then return []
     if dirLocation isa list then dirLocation = dirLocation[0] + "/" + dirLocation[1]
     file = self.server.host_computer.File(dirLocation)
@@ -325,27 +557,27 @@ GameServer.listDirsIn = function(dirLocation)
     return ret
 end function
 
-GameServer.mkFilename = function(dirname, basename)
+GameServer.Server.mkFilename = function(dirname, basename)
     if dirname isa string then return [dirname, basename]
     if dirname.len != 2 then exit("mkFilename: Invalid API usage")
     nextDir = dirname[0] + "/" + dirname[1]
     return [nextDir, basename]
 end function
 
-GameServer.getOrMkFile = function(filename)
+GameServer.Server.getOrMkFile = function(filename)
     if not filename isa list or filename.len != 2 then exit("getOrMkFile: Invalid API usage")
     if self.server == null then return null
     self.server.host_computer.touch(filename[0], filename[1])
     return self.server.host_computer.File(filename[0] + "/" + filename[1])
 end function
 
-GameServer.getExistingFile = function(filename)
+GameServer.Server.getExistingFile = function(filename)
     if not filename isa list or filename.len != 2 then exit("getExistingFile: Invalid API usage")
     if self.server == null then return null
     return self.server.host_computer.File(filename[0] + "/" + filename[1])
 end function
 
-GameServer.mkNewFile = function(filename)
+GameServer.Server.mkNewFile = function(filename)
     if not filename isa list or filename.len != 2 then exit("mkNewFile: Invalid API usage")
     if self.server == null then return null
     file = self.server.host_computer.File(filename[0] + "/" + filename[1])
@@ -354,7 +586,7 @@ GameServer.mkNewFile = function(filename)
     return self.server.host_computer.File(filename[0] + "/" + filename[1])
 end function
 
-GameServer.mkDir = function(dirLocation)
+GameServer.Server.mkDir = function(dirLocation)
     if dirLocation isa list then dirLocation = dirLocation[0] + "/" + dirLocation[1]
     pos = dirLocation.lastIndexOf("/")
     self.server.host_computer.create_folder(dirLocation[:pos], dirLocation[pos+1:])
@@ -363,7 +595,7 @@ GameServer.mkDir = function(dirLocation)
     return file
 end function
 
-GameServer.rmFile = function(filename)
+GameServer.Server.rmFile = function(filename)
     if not filename isa list or filename.len != 2 then exit("rmFile: Invalid API usage")
     if self.server == null then return null
     file = self.server.host_computer.File(filename[0] + "/" + filename[1])
@@ -371,7 +603,7 @@ GameServer.rmFile = function(filename)
     return self.server.host_computer.File(filename[0] + "/" + filename[1]) == null
 end function
 
-GameServer.rmTree = function(baseDir)
+GameServer.Server.rmTree = function(baseDir)
     if baseDir isa list then baseDir = baseDir[0] + "/" + baseDir[1]
     if baseDir isa string then baseDir = self.server.host_computer.File(baseDir)
     visited = {}
@@ -464,11 +696,11 @@ GameServer.ChatRoom.PullMessages = function()
     ret = []
     now = current_date
     nowEpoch = dateEpoch(now)
-    lastPlayers = ret.knownPlayers
-    ret.knownPlayers = {}
+    lastPlayers = self.knownPlayers
+    self.knownPlayers = {}
     for item in self.server.listIn(self.roomDir)
         if item.name != self.playerName and item.name[0] != "." then
-            ret.knownPlayers[item.name] = true
+            self.knownPlayers[item.name] = true
             if lastPlayers.hasIndex(item.name) then
                 lastPlayers.remove(item.name)
             else if not self.first then
@@ -476,7 +708,9 @@ GameServer.ChatRoom.PullMessages = function()
             end if
             location = self.server.mkFilename(self.roomDir, item.name)
             for msg in self.server.pull(location)
-                ret.push([msg[1], item.name, msg[2], dateEpoch(msg[1])])
+                if msg[2].len > 0 then
+                    ret.push([msg[1], item.name, msg[2], dateEpoch(msg[1])])
+                end if
             end for
         end if
     end for
@@ -498,7 +732,7 @@ GameServer.Lobby.mk = function(server, playerName, force)
     ret = new GameServer.Lobby
     ret.playerName = playerName
     ret.server = server
-    ret.lobbyDir = server.gameDir + "/Lobby"
+    ret.lobbyDir = server.serverRootDir + "/Lobby"
     // KnownGames map of game name -> GameInfo
     ret.KnownGames = {}
     ret.pendingGameState = {}  // map of game name / instance name -> state
@@ -525,14 +759,45 @@ end function
 // Lobby.PullMessages Pull messages from players and pending game state changes.
 GameServer.Lobby.PullMessages = function()
     if self.server == null or self.chatRoom == null then return []
-    // TODO update KnownGames and pendingGameState.  Changes to pendingGameState are added as messages.
-    // TODO get chat messages.
-    // TODO sort messages by epoch date
-    // TODO return messages
+    ret = []
+    now = current_date
+    epoch = dateEpoch(now)
+
+    // Pending game state changes.
+    prevGameState = self.pendingGameState
+    self.pendingGameState = {}
+    for gameName in self.server.KnownGames.indexes
+        game = self.server.KnownGames[gameName]
+        game.FetchPendingGames
+        for pendingName in game.PendingGames.indexes
+            gpn = "/" + gameName + "/" + pendingName
+            pending = game.PendingGames[pendingName]
+            status = pending.Status
+            self.pendingGameState[gpn] = status
+            if prevGameState.hasIndex(gpn) then
+                if prevGameState[gpn] != status then
+                    ret.push([now, gpn, "/emote " + status, epoch])
+                end if
+                prevGameState.remove(gpn)
+            else
+                ret.push([now, gpn, "/emote (new) " + status, epoch])
+            end if
+        end for
+        for name in prevGameState.indexes
+            ret.push([now, name, "/emote (closed)", epoch])
+        end for
+    end for
+    // Chat messages.
+    ret = ret + self.chatRoom.PullMessages
+
+    // sort by date (index [3] in each item).
+    QuickSort(ret, @String3AscOrder)
+    return ret
 end function
 
+// Lobby.PostMessage Post a message to the server.
 GameServer.Lobby.PostMessage = function(msg)
-    // TODO post the message to chatRoom.
+    if self.chatRoom != null then self.chatRoom.Post(msg)
 end function
 
 // ====================================================================
@@ -543,7 +808,7 @@ GameServer.GameInfo.mk = function(server, aboutFile, infoFile)
     // aboutFile - the File object for the `about.txt` file.
     // infoFile - the File object for the `game.inf` file.
     ret = new GameServer.GameInfo
-    ret.about = aboutFile.get_content
+    ret.About = aboutFile.get_content
     ret.server = server
     aboutPath = aboutFile.path
     pos = aboutPath.lastIndexOf("/")
@@ -552,8 +817,8 @@ GameServer.GameInfo.mk = function(server, aboutFile, infoFile)
     pos = ret.gameDir.lastIndexOf("/")
     if pos == null then return null
     ret.SimpleName = ret.gameDir[pos + 1:]
-    ret.pendingGameDir = ret.gameDir + "/Pending"
-    ret.activeGameDir = ret.gameDir + "/Active"
+    ret.pendingGameDir = server.serverRootDir + "/Pending/" + ret.SimpleName
+    ret.activeGameDir = server.serverRootDir + "/Active/" + ret.SimpleName
     ret.knownPendingGames = {}
     ret.details = ParsePropertyFile(infoFile.get_content)
     ret.Name = null
@@ -576,6 +841,12 @@ GameServer.GameInfo.mk = function(server, aboutFile, infoFile)
     if ret.Host != null and ret.Host.indexOf("/") != null then return null
     if ret.Client.indexOf("/") != null then return null
     return ret
+end function
+
+// GameInfo.PendingGames Get the pending games list or, if not fetched yet, will fetch it.
+GameServer.GameInfo.PendingGames = function()
+    if self.knownPendingGames.len > 0 then return self.knownPendingGames
+    return self.FetchPendingGames
 end function
 
 // GameInfo.FetchPendingGames Refresh the map of names to pending games for the game.
@@ -614,7 +885,7 @@ GameServer.GameInfo.JoinGame = function(instanceName, playerName)
     file = self.server.getOrMkFile(self.server.mkFilename(pendingGame.pendingDir, playerName))
     if file == null then return null
     file.set_content("joined")
-    return GameServer.JoinedInstance.mk(self.server, playerName, pendingGame)
+    return GameServer.JoinedInstance.mk(self.server, playerName, pendingGame, false)
 end function
 
 // GameInfo.HostGame Start a new instance of a game.  Creates the pending lobby.
@@ -625,6 +896,7 @@ GameServer.GameInfo.HostGame = function(instanceName, playerName)
         print("Error: could not create the host binary file.  Aborting.")
         return null
     end if
+    // TODO check if the instance name already exists in either Pending or Active.
     server = self.server
     gameDir = server.mkFilename(self.pendingGameDir, instanceName)
     cleanUp = function()
@@ -638,9 +910,9 @@ GameServer.GameInfo.HostGame = function(instanceName, playerName)
     hostFile = server.mkNewFile(server.mkFilename(gameDir, ".host.txt"))
     if hostFile == null then return cleanUp()
     hostFile.set_content(playerName)
-    pendingGame = GameServer.PendingGame.mk(self, hostDir, server.mkFilename(self.activeGameDir, pendingDir.name))
+    pendingGame = GameServer.PendingGame.mk(self, hostDir, server.mkFilename(self.activeGameDir, instanceName))
     if pendingGame == null then return null
-    return GameServer.HostedInstance.mk(self.server, playerName, pendingGame)
+    return GameServer.JoinedInstance.mk(self.server, playerName, pendingGame, true)
 end function
 
 GameServer.GameInfo.buildClientBin = function()
@@ -682,7 +954,7 @@ GameServer.GameInfo.buildBin = function(sourceFile, sourceBin = null)
         end if
         name = file.path[file.path.lastIndexOf("/") + 1:]
         // Ignore the sourceBin real name.  Just use whatever it compiles to.
-        compiledName = parent + "/" + name
+        compiledName = parent + "/" + name[:-4]
         file = get_shell.host_computer.File(compiledName)
         if file == null then
             print("Error: compiled " + sourceFile + ", but couldn't find the compiled file")
@@ -698,7 +970,7 @@ GameServer.GameInfo.buildBin = function(sourceFile, sourceBin = null)
     else
         print("Error: Don't know how to build source file " + sourceFile)
         return null
-    end if    
+    end if
 end function
 
 // ====================================================================
@@ -736,16 +1008,16 @@ end function
 
 // PendingGame.Fetch Fetch the list of players for the game.  Refreshes from the server.
 GameServer.PendingGame.Fetch = function()
-    ret.HostPlayer = null
-    ret.Players = {}
+    self.HostPlayer = null
+    self.Players = {}
     for file in self.server.listIn(self.pendingDir)
         if file.name == ".host.txt" then
-            ret.HostPlayer = file.get_content
+            self.HostPlayer = file.get_content
         else if file.name[0] != "." then
-            ret.Players[file.name] = file.get_content
+            self.Players[file.name] = file.get_content
         end if
     end for
-    return ret.Players
+    return self.Players
 end function
 
 GameServer.PendingGame.JoinChat = function(playerName, force)
@@ -760,31 +1032,62 @@ end function
 // Joined Game Instance information
 
 GameServer.JoinedInstance = {}
-GameServer.JoinedInstance.mk = function(server, playerName, pendingGame)
+GameServer.JoinedInstance.mk = function(server, playerName, pendingGame, hosting)
     if IsInvalidName(playerName) then return null
     ret = new GameServer.JoinedInstance
     ret.server = server
     ret.pendingGame = pendingGame // PendingGame instance
     ret.playerName = playerName
-    ret.playerFile = self.server.mkFilename(pendingGame.pendingDir, playerName)
-    ret.ChatRoom = pendingGame.JoinChat(playerName, true)
-    if ret.ChatRoom == null then return null
+    ret.playerFile = server.mkFilename(pendingGame.pendingDir, playerName)
+    pfile = server.getOrMkFile(ret.playerFile)
+    if pfile == null then return null
+    if hosting then
+        pfile.set_content("hosting")
+    else
+        pfile.set_content("joined")
+    end if
+    ret.hosting = hosting
+    ret.lastKnownState = null
+    ret.knownPlayerState = {}
+    ret.chatRoom = pendingGame.JoinChat(playerName, true)
+    if ret.chatRoom == null then return null
+    if hosting then ret.SetStatus("instance host")
     return ret
 end function
 
-// JoinedInstance.Status Game status.
+// JoinedInstance.InstanceStatus Instance status.
 GameServer.JoinedInstance.InstanceStatus = function()
     if self.pendingGame == null then return "left"
     return self.pendingGame.Status
 end function
 
-// JoinedInstance.Leanve Leave this game instance.
-GameServer.JoinedInstance.Leave = function()
-    if self.ChatRoom != null then self.ChatRoom.Disconnect
-    self.ChatRoom = null
-    if self.server != null then self.server.rmFile(self.playerFile)
+//JoinedInstance.InstanceName Instance name
+GameServer.JoinedInstance.InstanceName = function()
+    if self.pendingGame == null then return "N/A"
+    return self.pendingGame.InstanceName
+end function
+
+// JoinedInstance.Disconnect Leave this game instance.
+GameServer.JoinedInstance.Disconnect = function()
+    if self.server == null or self.pendingGame == null then return
+    if self.chatRoom != null then self.chatRoom.Disconnect()
+    self.chatRoom = null
+    if self.hosting then
+        // First, remove the _host.txt file.  That's the primary signal that the instance is gone.
+        // Note that for starting a game, removing this file is the last action to indicate the game is active.
+        self.server.rmFile(self.server.mkFilename(self.pendingGame.pendingDir, ".host.txt"))
+        self.server.rmTree(self.pendingGame.pendingDir)
+        self.pendingGame.close()
+    else
+        if self.server != null then self.server.rmFile(self.playerFile)
+    end if
     self.server = null
     self.pendingGame = null
+end function
+
+// JoinedInstance.IsHosting Is this instance hosted by the current player?
+GameServer.JoinedInstance.IsHosting = function()
+    return self.hosting
 end function
 
 // JoinedInstance.SetStatus Set this player's status.
@@ -794,16 +1097,64 @@ GameServer.JoinedInstance.SetStatus = function(status)
     if file != null then file.set_content(status)
 end function
 
-// JoinedInstance.PlayerStatus Get the other player status.
-GameServer.JoinedInstance.PlayerStatus = function()
-    if self.server == null or self.pendingGame == null then return
+// JoinedInstance.FetchPlayerStatus Get the other players' status.
+GameServer.JoinedInstance.FetchPlayerStatus = function()
+    if self.server == null or self.pendingGame == null then return {}
     players = self.pendingGame.Fetch
     if players.hasIndex(self.playerName) then players.remove(self.playerName)
     return players
 end function
 
-// JoinedInstance.OnActive When the game status is "active", this can be called to launch the game.
+// JoinedInstance.Game Get the game information
+GameServer.JoinedInstance.Game = function()
+    if self.pendingGame == null then return null
+    return self.pendingGame.gameInfo
+end function
+
+// JoinedInstance.PullMessages Fetch messages for display.
+GameServer.JoinedInstance.PullMessages = function()
+    // TODO fetch messages
+end function
+
+GameServer.JoinedInstance.PostMessage = function(msg)
+    if self.chatRoom != null then self.chatRoom.Post(msg)
+end function
+
+// JoinedInstance.Launch Join the game, either by hosting it or joining it.
 GameServer.JoinedInstance.Launch = function()
+    if self.hosting then
+        return self.hostServer()
+    else
+        return self.joinServer()
+    end if
+end function
+
+// JoinedInstance.CanStart Can this instance be started?
+GameServer.JoinedInstance.CanStart = function()
+    if self.server == null or not self.hosting then return "not hosting"
+    self.pendingGame.Fetch()
+    count = self.pendingGame.Players.len
+    if count > self.pendingGame.gameInfo.MaxPlayers then
+        return "Too many players pending (" + count + ").  Someone needs to drop first."
+    end if
+    if count < self.pendingGame.gameInfo.MinPlayers then
+        return "Too few players pending (" + count + ").  Someone needs to join."
+    end if
+    return null
+end function
+
+GameServer.JoinedInstance.joinServer = function()
+    if self.server == null or self.pendingGame == null then return
+    if self.pendingGame.gameInfo.ClientBin == null then
+        print("Error: you must prepare the game before starting it.")
+        return
+    end if
+    hostFile = get_shell.host_computer.File(self.pendingGame.gameInfo.ClientBin)
+    if hostFile == null or not hostFile.is_binary then
+        print("Error: could not find the host game program.  Did it fail to build?")
+        return
+    end if
+
     // TODO ensure the game is active
     // TODO ensure the player has the client file compiled.
     // TODO setup the shared object.
@@ -811,36 +1162,7 @@ GameServer.JoinedInstance.Launch = function()
     // TODO close off this instance.
 end function
 
-// ====================================================================
-// Hosted Game Instance information
-
-GameServer.HostedInstance = {}
-GameServer.HostedInstance.mk = function(server, playerName, pendingGame)
-    if IsInvalidName(playerName) or IsInvalidName(pendingGame) then return null
-    ret = new GameServer.HostedInstance
-    ret.server = server
-    ret.pendingGame = pendingGame // PendingGame instance
-    ret.playerName = playerName
-    ret.ChatRoom = pendingGame.JoinChat(playerName, true)
-    if ret.ChatRoom == null then return null
-    return ret
-end function
-
-// HostedInstance.Abandon Abandon this game.
-GameServer.HostedInstance.Abandon = function()
-    // First, remove the _host.txt file.  That's the primary signal that the instance is gone.
-    // Note that for starting a game, removing this file is the last action to indicate the game is active.
-    if self.server == null or self.pendingGame == null then return
-    if self.ChatRoom != null then self.ChatRoom.Disconnect()
-    self.server.rmFile(self.server.mkFilename(self.pendingGame.pendingDir, ".host.txt"))
-    self.server.rmTree(self.pendingGame.pendingDir)
-    self.server = null
-    self.pendingGame.close()
-    self.pendingGame = null
-end function
-
-// HostedInstance.Start Start the game.
-GameServer.HostedInstance.Start = function()
+GameServer.JoinedInstance.hostServer = function()
     if self.server == null or self.pendingGame == null then return
     if self.pendingGame.gameInfo.HostBin == null then
         print("Error: you must prepare the game before starting it.")
@@ -848,7 +1170,7 @@ GameServer.HostedInstance.Start = function()
     end if
     hostFile = get_shell.host_computer.File(self.pendingGame.gameInfo.HostBin)
     if hostFile == null or not hostFile.is_binary then
-        print("Error: could not find the host game program.  Did it fail to build?")
+        print("Error: could not find the host game program (" + self.pendingGame.gameInfo.HostBin + ").  Did it fail to build?")
         return
     end if
 
@@ -864,7 +1186,7 @@ GameServer.HostedInstance.Start = function()
     end if
     // TODO ensure all the players have a "ready" state.
 
-    if self.ChatRoom != null then self.ChatRoom.Post("Host has started the game.")
+    if self.chatRoom != null then self.chatRoom.Post("Host has started the game.")
 
     // Start up the active game.
     players = []
@@ -877,8 +1199,8 @@ GameServer.HostedInstance.Start = function()
         content = content + char(10) + name
     end for
     res = self.server.mkDir(self.pendingGame.activeDir)
-    if res != true then
-        print("Error: Failed to create the active game directory: " + res)
+    if res == null then
+        print("Error: Failed to create the active game directory")
         return
     end if
     file = self.server.getOrMkFile(self.server.mkFilename(self.pendingGame.activeDir, ".host.txt"))
@@ -889,8 +1211,8 @@ GameServer.HostedInstance.Start = function()
     end if
     file.set_content(content)
 
-    if self.ChatRoom != null then self.ChatRoom.Disconnect()
-    self.ChatRoom = null
+    if self.chatRoom != null then self.chatRoom.Disconnect()
+    self.chatRoom = null
 
     // At the very end of instance launching, the _host.txt file is removed then the pending directory.
     self.server.rmFile(self.server.mkFilename(self.pendingGame.pendingDir, ".host.txt"))
@@ -1018,5 +1340,15 @@ IsInvalidName__R2L = "A".code
 IsInvalidName__R2H = "Z".code
 IsInvalidName__R3L = "0".code
 IsInvalidName__R3H = "9".code
+
+// Words Split the text into distinct words, stripped of surrounding spaces.
+Words = function(text)
+    parts = text.split(" ")
+    ret = []
+    for part in parts
+        if part.len > 0 then ret.push(part)
+    end for
+    return ret
+end function
 
 if locals == globals then main()

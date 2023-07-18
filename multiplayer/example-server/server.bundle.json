@@ -1,0 +1,181 @@
+[
+    {
+        "type": "about",
+        "description": [
+            "General bundle for those wanting to run a server.",
+            "It performs the file setup that the owner and uploader perform.",
+            "It creates a general 'player' user for logging in and access, and a 'game' user for uploading games."
+        ]
+    },
+    {
+        "$comment": "============================================================================",
+        "type": "user",
+        "user": "game",
+        "password": "gamePasswd"
+    },
+    {
+        "type": "group",
+        "group": "game",
+        "user": "game"
+    },
+
+    {
+        "type": "user",
+        "user": "player",
+        "password": "player"
+    },
+    {
+        "type": "group",
+        "group": "game",
+        "user": "player"
+    },
+
+
+    {
+        "$comment": "============================================================================",
+        "type": "folder",
+        "path": "/gameserver"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver",
+        "owner": "root:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver",
+        "user": "rwx",
+        "group": "rw",
+        "other": ""
+    },
+
+
+    {
+        "type": "file",
+        "local": "about.txt",
+        "path": "/gameserver/about.txt"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/about.txt",
+        "user": "rw",
+        "group": "r",
+        "other": "r"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/about.txt",
+        "owner": "root:game"
+    },
+
+    {
+        "type": "folder",
+        "path": "/gameserver/Lobby"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Lobby",
+        "owner": "root:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Lobby",
+        "user": "rwx",
+        "group": "rwx",
+        "other": ""
+    },
+
+    {
+        "type": "folder",
+        "path": "/gameserver/Games"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Games",
+        "owner": "game:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Games",
+        "user": "rwx",
+        "group": "rx",
+        "other": ""
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Pending"
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Active"
+    },
+
+    {
+        "$comment": "=================================================",
+        "type": "source",
+        "path": "/gameserver/Games/fallingbricks/fallingbricks.src",
+        "local": "../../falling-bricks/multiplayer/fallingbricks.src"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/fallingbricks/about.txt",
+        "local": "../../falling-bricks/multiplayer/about.txt"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/fallingbricks/gameinfo.txt",
+        "local": "../../falling-bricks/multiplayer/gameinfo.txt"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Games/fallingbricks",
+        "recursive": true,
+        "owner": "game:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Games/fallingbricks",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rx",
+        "other": ""
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Pending/fallingbricks"
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Active/fallingbricks"
+    },
+
+
+
+    {
+        "$comment": "=================================================",
+        "type": "chown",
+        "path": "/gameserver/Pending",
+        "owner": "player:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Pending",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rwx",
+        "other": ""
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Active",
+        "owner": "player:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Active",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rwx",
+        "other": ""
+    }
+]
