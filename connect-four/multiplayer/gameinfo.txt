@@ -1,0 +1,5 @@
+name=Connect Four
+desc=Drop tokens in slots against an opponent
+min-players=2
+max-players=2
+client=connect4.src

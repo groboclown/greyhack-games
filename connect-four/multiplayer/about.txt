@@ -1,0 +1,4 @@
+<color=#00a0a0>Connect Four
+<color=#20a020>A clone of connect four
+
+The objective of the game is for a player to be the first to form a straight line of 4 tokens of their own color.  The four tokens can be connected vertically, horizontally or diagonally.

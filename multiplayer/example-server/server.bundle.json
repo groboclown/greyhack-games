@@ -150,11 +150,52 @@
     },
 
 
+    {
+        "$comment": "=================================================",
+        "type": "source",
+        "path": "/gameserver/Games/connect4/connect4.src",
+        "local": "../../connect-four/multiplayer/connect4.src"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/connect4/about.txt",
+        "local": "../../connect-four/multiplayer/about.txt"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/connect4/gameinfo.txt",
+        "local": "../../connect-four/multiplayer/gameinfo.txt"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Games/connect4",
+        "recursive": true,
+        "owner": "game:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Games/connect4",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rx",
+        "other": ""
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Pending/connect4"
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Active/connect4"
+    },
+
+
 
     {
         "$comment": "=================================================",
         "type": "chown",
         "path": "/gameserver/Pending",
+        "recursive": true,
         "owner": "player:game"
     },
     {
@@ -168,6 +209,7 @@
     {
         "type": "chown",
         "path": "/gameserver/Active",
+        "recursive": true,
         "owner": "player:game"
     },
     {
