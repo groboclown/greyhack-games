@@ -1,0 +1,5 @@
+name=Electronic Tennis
+desc=A P*ng clone
+min-players=2
+max-players=2
+client=tennis.src

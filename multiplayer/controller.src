@@ -24,7 +24,7 @@ while true
       idx = idx + 1
     end if
   else
-    print("Line mode.  Type a messange then <enter> to send it.")
+    print("Line mode.  Type a message then <enter> to send it.")
     print("':ch' changes to key mode; ':exit' to quit.")
     x = user_input("input> ", false, false)
     if x == ":ch" then

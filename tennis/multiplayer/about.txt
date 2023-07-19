@@ -1,0 +1,5 @@
+<color=#ff8040>Tennis!
+
+Play tennis on an electronic compuper against other people through the magic network!  Be the envy of your friends when your score number is higher than theirs!
+
+Use the left and right arrow keys to move your paddle.  The "Escape" key will quit.

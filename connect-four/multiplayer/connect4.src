@@ -79,6 +79,8 @@ Config.LoadPlays = function
 end function
 
 Config.SavePlay = function(play)
+    // This player information stores the complete history of plays.
+    // This is useful for turn based games.
 	self.myPlays.push(play)
 	file = self.server.File(self.myPlayFile)
 	if file == null then exit("Play file removed; aborting game.")

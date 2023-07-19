@@ -12,17 +12,16 @@ GameLib.New = function(context=null)
     end if
 
     ret.gameDir = context.gameDir
-    if not ret.gameDir isa string then return null
-
     ret.server = context.server
-    if typeof(ret.server) != "computer" then return null
-
     ret.controller = context.controller
-    if typeof(ret.controller) != "file" then return null
 
     // PlayerName the current game player's alias.
     ret.PlayerName = context.playerName  // string
-    if not ret.PlayerName isa string then return null
+
+    if not ret.gameDir isa string or typeof(ret.server) != "computer" or typeof(ret.controller) != "file" or not ret.PlayerName isa string then
+        print("Invalid context object format")
+        return null
+    end if
 
     file = ret.server.File(ret.gameDir + "/.host.txt")
     if file == null then return null
@@ -30,12 +29,49 @@ GameLib.New = function(context=null)
     // PlayerOrder order of players in the game; the hosting player is first.
     ret.PlayerOrder = file.get_content.split(char(10))
 
+    // PlayerIndex the current player's index in the game.
+    ret.PlayerIndex = ret.PlayerOrder.indexOf(ret.PlayerName)
+    if ret.PlayerIndex == null then
+        print("Player '" + ret.PlayerName + "' not in game's player list.")
+        return null
+    end if
+
     ret.ctrlIdx = ""
     ret.postId = {}
     ret.postQueue = {}
     ret.recvId = {}
 
+    // IsHost true if this player hosted the game; false if joined the game.
+    ret.IsHost = ret.PlayerIndex == 0
     return ret
+end function
+
+// WaitForPlayers Wait up to the number of seconds for all players to be present.
+//
+// Returns true on timeout waiting for players, false on all players found before the timeout.
+// When the check loops, the onWait function is called.  It should, at a minimum, call
+// `wait(0.5)` or something similar.
+GameLib.WaitForPlayers = function(timeoutSeconds=60.0, onWait=null)
+    find = {}
+    for name in self.PlayerOrder
+        find[name] = true
+    end for
+
+    endTime = time + timeoutSeconds
+    while time < endTime
+        check = {} + find
+        for name in check.indexes
+            file = self.server.File(self.gameDir + "/" + name)
+            if file != null then find.remove(name)
+        end for
+        if find.len <= 0 then return false
+        if @onWait != null then
+            onWait()
+        else
+            wait(0.5)
+        end if
+    end while
+    return true
 end function
 
 // NextCommand Read the next command from the controller.

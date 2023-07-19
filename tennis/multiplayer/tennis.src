@@ -1,0 +1,638 @@
+// For Use with the Multiplayer server.
+
+FREQUENCY = 0.201   // for performance reasons
+WAIT_TIMEOUT = 20.0 // seconds before assuming opponent timed out / lagged out / crashed
+
+GameLib = {}
+
+// New Create a new GameLib object.  Returns null on error in the setup.
+GameLib.New = function(context=null)
+    if context == null then context = get_custom_object
+    ret = new GameLib
+    if not context.hasIndex("gameDir") or not context.hasIndex("server") or not context.hasIndex("controller") or not context.hasIndex("playerName") then
+        print("Invalid context object")
+        return null
+    end if
+
+    ret.gameDir = context.gameDir
+    ret.server = context.server
+    ret.controller = context.controller
+
+    // PlayerName the current game player's alias.
+    ret.PlayerName = context.playerName  // string
+
+    if not ret.gameDir isa string or typeof(ret.server) != "computer" or typeof(ret.controller) != "file" or not ret.PlayerName isa string then
+        print("Invalid context object format")
+        return null
+    end if
+
+    file = ret.server.File(ret.gameDir + "/.host.txt")
+    if file == null then return null
+
+    // PlayerOrder order of players in the game; the hosting player is first.
+    ret.PlayerOrder = file.get_content.split(char(10))
+
+    // PlayerIndex the current player's index in the game.
+    ret.PlayerIndex = ret.PlayerOrder.indexOf(ret.PlayerName)
+    if ret.PlayerIndex == null then
+        print("Player '" + ret.PlayerName + "' not in game's player list.")
+        return null
+    end if
+
+    // 1 -> 0, 0 -> 1 magic math.
+    ret.otherPlayer = ret.PlayerOrder[1 - ret.PlayerIndex]
+
+    ret.ctrlIdx = ""
+
+    // IsHost true if this player hosted the game; false if joined the game.
+    ret.IsHost = ret.PlayerIndex == 0
+    return ret
+end function
+
+// WaitForPlayers Wait up to the number of seconds for all players to be present.
+//
+// Returns true on timeout waiting for players, false on all players found before the timeout.
+// When the check loops, the onWait function is called.  It should, at a minimum, call
+// `wait(0.5)` or something similar.
+GameLib.WaitForPlayers = function(timeoutSeconds=60.0, onWait=null)
+    find = {}
+    for name in self.PlayerOrder
+        find[name] = true
+    end for
+
+    endTime = time + timeoutSeconds
+    while time < endTime
+        check = {} + find
+        for name in check.indexes
+            file = self.server.File(self.gameDir + "/" + name)
+            if file != null then find.remove(name)
+        end for
+        if find.len <= 0 then return false
+        if @onWait != null then
+            onWait()
+        else
+            wait(0.5)
+        end if
+    end while
+    return true
+end function
+
+// NextCommand Read the next command from the controller.
+//
+// Returns null if there is no new command, or an array
+// [isKey (boolean), value].  If isKey is 1, then the value
+// is the name of the key (the enter key is 'Enter').  If
+// isKey is 0, then the value is the line entered.
+// If the isKey is 2, then the controller program has exited.
+GameLib.NextCommand = function()
+    val = self.controller.get_content
+    if val == "exit" then return [2, ""]
+    pos = val.indexOf("|")
+    if pos == null then return null
+    idx = val[:pos]
+    if idx != self.ctrlIdx then
+        // New command
+        self.ctrlIdx = idx
+        if val[pos+1] == "!" then return [1, val[pos+2:]]
+        return [0, val[pos+2:]]
+    end if
+    return null
+end function
+
+// getState Get the state (list of numbers) of some name.
+GameLib.getState = function(name, requiredCount, debug=false)
+    if self.server == null then return null
+    locStr = self.gameDir + "/" + name
+    file = self.server.File(locStr)
+    if file == null then
+        // if debug then print("!! could not find file [" + locStr + "]")
+        return null
+    end if
+    res = file.get_content
+    if res == null then
+        // if debug then print("!! could not read file [" + locStr + "]")
+        return null
+    end if
+    ret = []
+    for item in res.split(GameLib.msgSep)
+        val = item.to_int
+        if not val isa number then
+            // if debug then print("!! failed number parsing '" + res + "'; ok parsed " + ret)
+            return null
+        end if
+        ret.push(val)
+    end for
+    if ret.len != requiredCount then
+        // Should this be a critical error?
+        // if debug then print("!! refusing to parse '" + res + "' -> " + ret + "; len should be " + requiredCount)
+        return null
+    end if
+    return ret
+end function
+
+// setState Set the state of some name (list of strings).
+// The caller needs to perform str(number); this is for performance reasons.
+GameLib.setState = function(name, states)
+    if self.server == null then return
+    locStr = self.gameDir + "/" + name
+    file = self.server.File(locStr)
+    if file == null then return
+    ret = ""
+    for item in states
+        ret = ret + GameLib.msgSep + str(item)
+    end for
+    file.set_content(join(states, GameLib.msgSep))
+end function
+
+// SetGuestState Set the current player's paddle change in X position.
+GameLib.SetGuestState = function(turn, deltaX)
+    if self.IsHost then exit("Invalid API: called SetGuestState by host")
+    self.setState(self.PlayerName, [str(turn), str(deltaX)])
+end function
+
+// FetchGuestState Gets the guest's turn and paddle change in X position.
+GameLib.FetchGuestState = function()
+    if not self.IsHost then exit("Invalid API: called FetchGuestState by guest")
+    return self.getState(self.otherPlayer, 2)
+end function
+
+// FetchServerState Get the (turn, ball x, ball y, paddle0 x, paddle1 x, score 0, score 1) state set by the host.
+GameLib.FetchServerState = function()
+    if self.IsHost then exit("Invalid API: called FetchServerState by guest")
+    return self.getState(self.otherPlayer, 7, true)
+end function
+
+// SetServerState Set the server state values; only callable by the server.
+GameLib.SetServerState = function(turn, ballPosX, ballPosY, paddle0x, paddle1x, score0, score1)
+    if not self.IsHost then exit("Invalid API: called SetServerState by non-host")
+    self.setState(self.PlayerName, [
+        str(turn),
+        str(ballPosX), str(ballPosY),
+        str(paddle0x), str(paddle1x),
+        str(score0), str(score1),
+    ])
+end function
+
+GameLib.msgSep = char(1)
+
+// =============================================
+// MVC View
+//    ... note that this has a copy of some of the state and owns other parts of the state.  Not good MVC.
+
+Tennis = {}
+Tennis.New = function(playerNames)
+    ret = new Tennis
+
+    ret.width = 80
+    ret.height = 17
+    ret.lastLine = ret.height - 1
+    midLinePos = 8
+    ret.paddleLen = 12
+    ret.playerPos = [floor((ret.width - ret.paddleLen) / 2), floor((ret.width - ret.paddleLen) / 2)]
+    ret.ballPos = [floor(ret.width / 2), midLinePos]
+    ret.score = [0, 0]
+    ret.color = ["#ff4040", "#2050a0"]
+    ret.names = [playerNames[0], playerNames[1]]
+    //                      1         2         3         4         5         6         7         8
+    //             12345678901234567890123456789012345678901234567890123456789012345678901234567890
+    lineStart = "<color=#444>"
+    midLineDisp = lineStart + "-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -"
+    blankLine = lineStart
+    for _ in range(1, ret.width)
+        blankLine = blankLine + " "
+    end for
+    ret.lineStartLen = lineStart.len
+    ret.baseBoard = []
+    for _ in range(1, ret.height)
+        ret.baseBoard.push(blankLine)
+    end for
+    ret.baseBoard[midLinePos] = midLineDisp
+    ret.paddleDisp = [
+        "<mark=" + ret.color[0] + "ff><color=" + ret.color[0] + ">",
+        "<mark=" + ret.color[1] + "ff><color=" + ret.color[1] + ">",
+    ]
+    for _ in range(1, ret.paddleLen)
+        ret.paddleDisp[0] = ret.paddleDisp[0] + "P"
+        ret.paddleDisp[1] = ret.paddleDisp[1] + "Q"
+    end for
+    ret.paddleDisp[0] = ret.paddleDisp[0] + "</color></mark>"
+    ret.paddleDisp[1] = ret.paddleDisp[1] + "</color></mark>"
+
+    ret.ballDisp = "<mark=#fffffff><color=#ffffff>BB</color></mark>"
+    ret.ballLen = 2
+
+    ret.DebugText = ""
+
+    return ret
+end function
+
+Tennis.eol = char(10)
+Tennis.Draw = function()
+    score0 = self.names[0] + ":" + self.score[0]
+    score1 = self.score[1] + ":" + self.names[1]
+    scoreWidth = score0.len + score1.len
+    scoreSep = ""
+    while scoreWidth < self.width
+        scoreSep = scoreSep + " "
+        scoreWidth = scoreWidth + 1
+    end while
+    scoreLine = "<color=" + self.color[0] + ">" + score0 + "</color>" + scoreSep + "<color=" + self.color[1] + ">" + score1 + "</color>"
+    board = [] + self.baseBoard
+    paddleLine = ""
+    for _ in range(1, self.playerPos[0])
+        paddleLine = paddleLine + " "
+    end for
+    board[0] = paddleLine + self.paddleDisp[0]
+    paddleLine = ""
+    for _ in range(1, self.playerPos[1])
+        paddleLine = paddleLine + " "
+    end for
+    board[self.lastLine] = paddleLine + self.paddleDisp[1]
+
+    // Insert the ball into the board.
+    if self.ballPos[0] >= 0 and self.ballPos[1] >= 0 then
+        ballLine = board[self.ballPos[1]]
+        board[self.ballPos[1]] = ballLine[:self.ballPos[0] + self.lineStartLen] + self.ballDisp + ballLine[self.ballPos[0] + self.ballLen + self.lineStartLen:]
+    end if
+
+    // self.DebugText = "DEBUG (" + self.ballPos[0] + ") (" + self.lineStartLen + ") (" + self.ballLen + ") (" + self.lineStartLen + ")" + Tennis.eol
+
+    return scoreLine + Tennis.eol + Tennis.eol + join(board, Tennis.eol) + Tennis.eol + self.DebugText + Tennis.eol
+end function
+
+//Tennis.MovePaddle = function(playerIndex, deltaX)
+//    self.SetPaddle(playerIndex, self.playerPos[playerIndex] + deltaX)
+//end function
+
+Tennis.SetPaddle = function(playerIndex, xPos)
+if not xPos isa number then exit("Setting paddle " + playerIndex + " to non integer: " + typeof(xPos))
+    xPos = floor(xPos)
+    if xPos < 0 then xPos = 0
+    if xPos + self.paddleLen >= self.width then xPos = self.width - self.paddleLen
+    self.playerPos[playerIndex] = xPos
+end function
+
+//Tennis.SetBallPos = function(xPos, yPos)
+//    if xPos < 0 then xPos = 0
+//    if yPos < 0 then yPos = 0
+//    if xPos > self.width - self.ballLen then xPos = self.width - self.ballLen
+//    if yPos > self.lastLine then yPos = self.lastLine
+//    self.ballPos[0] = xPos
+//    self.ballPos[1] = yPos
+//end function
+
+// ====================================================================
+// Host-managed physics (Model in MVC)
+
+TennisPhysics = {}
+TennisPhysics.New = function(boardWidth, boardHeight, ballWidth, ballHeight, paddleWidth, paddleHeight)
+    ret = new TennisPhysics
+    ret.playState = 0  // 0 == do nothing, 1 == wait for start, 2 == in-play
+
+    ret.scale = 10  // MAGIC NUMBER ALERT
+
+    // bounds checks
+    ret.width = boardWidth * ret.scale
+    ret.height = boardHeight * ret.scale
+
+    // ball size + velocity
+    ret.ballW = ballWidth * ret.scale
+    ret.ballH = ballHeight * ret.scale
+    ret.ballX = (ret.width - ret.ballW) / 2
+    ret.ballY = (ret.height - ret.ballH) / 2
+    ret.deltaX = 0.0
+    ret.deltaY = 0.0
+
+    ret.maxBallSpeed = 2.2 * ret.scale  // MAGIC NUMBER ALERT
+
+    // Paddle bounds
+    ret.paddleWidth = paddleWidth * ret.scale
+    ret.paddleHeight = paddleHeight * ret.scale
+    ret.paddle0x0 = (ret.width - ret.paddleWidth) / 2
+    ret.paddle0x1 = ret.paddle0x0 + ret.paddleWidth
+    ret.paddle1x0 = ret.paddle0x0
+    ret.paddle1x1 = ret.paddle0x1
+    ret.paddle0MaxY = paddleHeight * ret.scale
+    ret.paddle1MinY = ret.height - (paddleHeight * ret.scale)
+
+    // delay until starting game.  Only has meaning when state == 1
+    ret.PauseTime = 10  // MAGIC NUMBER ALERT
+    ret.startCountdown = 0
+    return ret
+end function
+
+// Start Start a new game, or pause after a score.
+TennisPhysics.Start = function()
+    self.playState = 1
+    self.startCountdown = self.PauseTime
+    // self.ballX = (self.width - self.ballW) / 2
+    // self.ballY = (self.height - self.ballH) / 2
+    self.deltaX = 0
+    self.deltaY = 0
+end function
+
+// Ball Get the [x, y] position of the ball.
+TennisPhysics.Ball = function()
+    if self.playState <= 1 then return [-5, -5]
+    return [floor(self.ballX / self.scale), floor(self.ballY / self.scale)]
+end function
+
+// Paddle0 Get the left-most X position of paddle 0
+TennisPhysics.Paddle0 = function()
+    return floor(self.paddle0x0 / self.scale)
+end function
+
+// Paddle1 Get the left-most X position of paddle 1
+TennisPhysics.Paddle1 = function()
+    return floor(self.paddle1x0 / self.scale)
+end function
+
+// Increment the game state.
+// Takes the paddle box positions (xLeft, xRight)
+// Returns 0 for a score for player 0, 1 for a score for player 1, or -1 for non-scoring.
+TennisPhysics.Step = function(paddle0deltaX, paddle1deltaX)
+    if self.playState == 0 then return -1
+
+    // Adjust paddles first.  This can happen even in paused state.
+    // Note the copy pasta
+    self.paddle0x0 = self.paddle0x0 + (paddle0deltaX * self.scale)
+    self.paddle0x1 = self.paddle0x1 + (paddle0deltaX * self.scale)
+    if self.paddle0x0 < 0 then
+        self.paddle0x0 = 0
+        self.paddle0x1 = self.paddleWidth
+    end if
+    if self.paddle0x1 > self.width then
+        self.paddle0x0 = self.width - self.paddleWidth
+        self.paddle0x1 = self.width
+    end if
+
+    self.paddle1x0 = self.paddle1x0 + (paddle1deltaX * self.scale)
+    self.paddle1x1 = self.paddle1x1 + (paddle1deltaX * self.scale)
+    if self.paddle0x0 < 0 then
+        self.paddle0x0 = 0
+        self.paddle0x1 = self.paddleWidth
+    end if
+    if self.paddle0x1 > self.width then
+        self.paddle0x0 = self.width - self.paddleWidth
+        self.paddle0x1 = self.width
+    end if
+
+    // Paused state handle
+    if self.playState == 1 then
+        self.startCountdown = self.startCountdown - 1
+        if self.startCountdown <= 0 then
+            // Unpause and reset the ball.
+            self.playState = 2
+            self.ballX = (self.width - self.ballW) / 2
+            self.ballY = (self.height - self.ballH) / 2
+
+            // Each square is 10 units in size.  This initial
+            // speed is heavily dependent on the frame rate to get a
+            // nice, playable game.
+            self.deltaX = 6.0 - (3.0 * rnd())  // MAGIC NUMBER ALERT
+            self.deltaY = 6.0 - (3.0 * rnd())  // MAGIC NUMBER ALERT
+        end if
+        return -1
+    end if
+
+    // Normal physics.
+    scoreFor = -1
+
+    newX0 = self.ballX + self.deltaX
+    newX1 = newX0 + self.ballW
+    newY0 = self.ballY + self.deltaY
+    newY1 = newY0 + self.ballH
+
+    // TODO This could include the left and right paddle edge detection.
+    // Right now, this just scores if it goes past the paddle.
+
+    if newY0 <= self.paddle0MaxY then
+        if newX1 >= self.paddle0x0 and newX0 <= self.paddle0x1 then
+            // Reflection off the paddle.
+            self.deltaY = -self.deltaY + (rnd() * self.scale * 0.2)  // MAGIC NUMBER ALERT
+            if self.deltaY <= 0 then exit("Physics failed: paddle 0 reflection ")
+            newY0 = self.paddle0MaxY
+            // newY1 = newY0 + self.ballH
+        else
+            scoreFor = 1  // paddle 0 missed, so player 1 gets the score.
+            newY0 = 0
+            // newY1 = self.ballH
+        end if
+        if newX0 < self.paddle0x0 and newX1 >= self.paddle0x0 then
+            // Left edge reflection - adjusts X speed.
+            self.deltaX = self.deltaX - (rnd() * self.scale * 1.5)  // MAGIC NUMBER ALERT
+        end if
+        if newX0 < self.paddle0x1 and newX1 >= self.paddle0x1 then
+            // Right edge reflection - adjusts X speed.
+            self.deltaX = self.deltaX + (rnd() * self.scale * 1.5)  // MAGIC NUMBER ALERT
+        end if
+    else if newY1 >= self.paddle1MinY then
+        if newX1 >= self.paddle1x0 and newX0 <= self.paddle1x1 then
+            // Reflection off the paddle.
+            self.deltaY = -self.deltaY - (rnd() * self.scale * 0.2)  // MAGIC NUMBER ALERT
+            if self.deltaY >= 0 then exit("Physics failed: paddle 1 reflection ")
+            newY0 = self.paddle1MinY - self.ballH
+            // newY1 = self.paddle1MinY
+        else
+            scoreFor = 0  // paddle 1 missed, so player 0 gets the score.
+            newY0 = self.paddle1MinY
+            // newY1 = newY0 + self.ballH
+        end if
+        if newX0 < self.paddle1x0 and newX1 >= self.paddle1x0 then
+            // Left edge reflection - adjusts X speed.
+            self.deltaX = self.deltaX - (rnd() * self.scale * 1.5)  // MAGIC NUMBER ALERT
+        end if
+        if newX0 < self.paddle1x1 and newX1 >= self.paddle1x1 then
+            // Right edge reflection - adjusts X speed.
+            self.deltaX = self.deltaX + (rnd() * self.scale * 1.5)  // MAGIC NUMBER ALERT
+        end if
+    end if
+
+    if self.deltaX < 0 and newX0 <= 0 or self.deltaX > 0 and newX1 >= self.width then
+        self.deltaX = -self.deltaX
+    end if
+    if newX0 < 0 then
+        newX0 = 0
+        newX1 = self.ballW
+    else if newX1 > self.width then
+        newX0 = self.width - self.ballW
+        newX1 = self.width
+    end if
+
+    speed = sqrt((self.deltaX * self.deltaX) + (self.deltaY * self.deltaY))
+    if speed > self.maxBallSpeed then
+        self.deltaX = self.deltaX * self.maxBallSpeed / speed
+        self.deltaY = self.deltaY * self.maxBallSpeed / speed
+    end if
+
+    // Physics Fix Up
+    if self.deltaX == 0 then self.deltaX = rnd() * self.scale * 0.2  // MAGIC NUMBER ALERT
+    if self.deltaY == 0 then self.deltaY = rnd() * self.scale * 0.2  // MAGIC NUMBER ALERT
+
+    self.ballX = newX0
+    self.ballY = newY0
+
+    return scoreFor
+end function
+
+// ====================================================================
+// MVC Controller Part - Host
+
+MvcHost = {}
+MvcHost.New = function(state, gameLib)
+    ret = new MvcHost
+    ret.state = state
+    ret.physics = TennisPhysics.New(state.width, state.height, state.ballLen, 1, state.paddleLen, 1)
+    ret.gameLib = gameLib
+    ret.turn = -1
+    ret.lastGuestTurn = -1
+    return ret
+end function
+
+MvcHost.Draw = function()
+    if self.turn < 0 then
+        return "Press <enter> to start the game."
+    end if
+    return self.state.Draw()
+end function
+
+MvcHost.Step = function()
+    ctl = self.gameLib.NextCommand()
+    if ctl[0] == 2 then exit("Controller aborted.")
+    if ctl[0] == 1 and ctl[1] == "Escape" then exit("User aborted.")
+    if self.turn < 0 then
+        if ctl[0] == 1 and ctl[1] == "Enter" then
+            self.turn = 0
+            self.physics.Start()
+            self.post()
+        else
+            self.post()
+        end if
+        return
+    end if
+    self.turn = self.turn + 1
+
+    self.state.DebugText = "Host turn " + self.turn + ", physics timer = " + self.physics.startCountdown + "; velocity = " + self.physics.deltaX + ", " + self.physics.deltaY + ";"
+
+    hostPaddleDelta = 0
+    if ctl[0] == 1 then
+        if ctl[1] == "LeftArrow" then
+            hostPaddleDelta = -2  // MAGIC NUMBER ALERT
+        else if ctl[1] == "RightArrow" then
+            hostPaddleDelta = 2  // MAGIC NUMBER ALERT
+        end if
+    end if
+
+    expires = WAIT_TIMEOUT + time
+    guestState = self.gameLib.FetchGuestState()
+    while guestState == null or guestState[0] == self.lastGuestTurn
+        if time > expires then exit("Aborting; assuming the opponent has timed out or crashed.")
+        // print("!! HOST [" + self.turn + " / " + self.lastGuestTurn + "] waiting on guest " + guestState)
+        wait(0.01)  // MAGIC NUMBER ALERT
+        guestState = self.gameLib.FetchGuestState()
+    end while
+    self.lastGuestTurn = guestState[0]
+    guestPaddleDelta = guestState[1]
+
+    scoreRes = self.physics.Step(hostPaddleDelta, guestPaddleDelta)
+    if scoreRes == 0 then
+        self.physics.Start()
+        self.state.score[0] = self.state.score[0] + 1
+    else if scoreRes == 1 then
+        self.physics.Start()
+        self.state.score[1] = self.state.score[1] + 1
+    end if
+    self.state.SetPaddle(0, self.physics.Paddle0)
+    self.state.SetPaddle(1, self.physics.Paddle1)
+    self.state.ballPos = self.physics.Ball
+
+    self.post()
+end function
+
+MvcHost.post = function()
+    ballPos = self.physics.Ball
+    paddle0x = self.physics.Paddle0
+    paddle1x = self.physics.Paddle1
+    self.gameLib.SetServerState(
+        self.turn,
+        ballPos[0], ballPos[1],
+        paddle0x, paddle1x,
+        self.state.score[0], self.state.score[1])
+end function
+
+// ====================================================================
+// MVC Controller Part - Guest
+
+MvcGuest = {}
+MvcGuest.New = function(state, gameLib)
+    ret = new MvcGuest
+    ret.state = state
+    ret.gameLib = gameLib
+    ret.turn = 0
+    return ret
+end function
+
+MvcGuest.Draw = function()
+    return self.state.Draw()
+end function
+
+MvcGuest.Step = function()
+    ctl = self.gameLib.NextCommand()
+    if ctl[0] == 2 then exit("Controller aborted.")
+    if ctl[0] == 1 and ctl[1] == "Escape" then exit("User aborted.")
+
+    paddleDelta = 0
+    if ctl[0] == 1 then
+        if ctl[1] == "LeftArrow" then
+            paddleDelta = -2  // MAGIC NUMBER ALERT
+        else if ctl[1] == "RightArrow" then
+            paddleDelta = 2  // MAGIC NUMBER ALERT
+        end if
+    end if
+
+    self.gameLib.SetGuestState(self.turn, paddleDelta)
+
+    // turn, ballPosX, ballPosY, paddle0x, paddle1x, score0, score1
+    expires = WAIT_TIMEOUT + time
+    serverState = self.gameLib.FetchServerState()
+    if serverState == null then
+        // print("!! GUEST [" + self.turn + "] waiting on host (null)")
+        return  // can be null during initial startup.
+    end if
+    while serverState[0] == self.turn
+        if time > expires then exit("Aborting; assuming the opponent has timed out or crashed.")
+        // print("!! GUEST [" + self.turn + "] waiting on host " + serverState)
+        wait(0.01)  // MAGIC NUMBER ALERT
+        serverState = self.gameLib.FetchServerState()
+        if serverState == null then exit("Aborting; looks like host quit the game.")
+    end while
+    self.turn = serverState[0]
+
+    self.state.ballPos[0] = serverState[1]
+    self.state.ballPos[1] = serverState[2]
+    self.state.playerPos[0] = serverState[3]
+    self.state.playerPos[1] = serverState[4]
+    self.state.score[0] = serverState[5]
+    self.state.score[1] = serverState[6]
+end function
+
+// ====================================================================
+
+main = function()
+    gameLib = GameLib.New()
+    if gameLib.WaitForPlayers() then exit("Timed out waiting for other players to join.")
+    state = Tennis.New(gameLib.PlayerOrder)
+    if gameLib.IsHost then
+        mvc = MvcHost.New(state, gameLib)
+    else
+        mvc = MvcGuest.New(state, gameLib)
+    end if
+
+    while true
+        mvc.Step()
+        print(mvc.Draw(), 1)
+        wait(FREQUENCY)
+    end while
+end function
+
+main()

@@ -47,6 +47,25 @@ main = function()
         return null
     end function
 
+    lastWhen = ""
+
+    DrawMessage = function(msg)
+        when = msg[0]
+        if when != outer.lastWhen then
+            print("<color=#000090>" + when)
+            outer.lastWhen = when
+        end if
+        name = msg[1]
+        msg = msg[2]
+        if name[0] == "/" then
+            print("<color=#10ff60>" + name + "</color> <color=#aaa>" + msg)
+        else if msg[:7] == "/emote " then
+            print("<i><color=#808000>" + name + "</color> <noparse>" + msg[7:] + "</noparse>")
+        else
+            print("<color=#808000>" + name + "</color><color=#aaa>: <noparse>" + msg + "</noparse>")
+        end if
+    end function
+
     server = GameServer.LoadFrom(params[0])
     if server == null then exit("Failed to load server configuration.")
     res = server.Connect()
@@ -78,17 +97,7 @@ main = function()
             end if
             // Pull messages and post them
             for message in lobby.PullMessages
-                // TODO assign each player a unique number.
-                when = message[0]
-                name = message[1]
-                msg = message[2]
-                if name[0] == "/" then
-                    print("G:" + when + " <color=#10ff60>" + msg)
-                else if msg[:7] == "/emote " then
-                    print("P:" + when + " <color=#808000>" + name + " <i><noparse>" + msg[7:] + "</noparse>")
-                else
-                    print("P:" + when + " <color=#808000>" + name + ": <noparse>" + msg + "</noparse>")
-                end if
+                DrawMessage(message)
             end for
             cmd = NextCommand()
             if cmd != null and cmd[0] == 2 then
@@ -142,7 +151,7 @@ main = function()
                         else
                             for instanceName in game.PendingGames.indexes
                                 msg = "<color=#6060ff><i><noparse>" + instanceName + "</noparse></color> "
-                                instance = game.PendingGame[instanceName]
+                                instance = game.PendingGames[instanceName]
                                 status = instance.Status
                                 statusMsg = "<color=#20ff20>Waiting for players</color>"
                                 if status == "full" then statusMsg = "<color=#606080>Instance full</color>"
@@ -242,17 +251,7 @@ main = function()
             end if
             // Pull messages and post them
             for message in joinedGame.PullMessages
-                // TODO assign each player a unique color.
-                when = message[0]
-                name = message[1]
-                msg = message[2]
-                if name[0] == "/" then
-                    print("G:" + when + " <color=#10ff60>" + msg)
-                else if msg[:7] == "/emote " then
-                    print("P:" + when + " <color=#808000>" + name + " <i><noparse>" + msg[7:] + "</noparse>")
-                else
-                    print("P:" + when + " <color=#808000>" + name + ": <noparse>" + msg + "</noparse>")
-                end if
+                DrawMessage(message)
             end for
 
             if joinedGame.InstanceStatus == "active" and not joinedGame.IsHosting then

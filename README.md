@@ -30,6 +30,14 @@ A [Z-Machine](http://inform-fiction.org/zmachine/) interpreter for Grey Hack.
 
 [connect-four](connect-four)
 
+A turn-based multiplayer game.
+
+## Tennis
+
+[tennis](tennis)
+
+Play tennis against other people.  Requires the multiplayer lobby to host it.
+
 
 ## Multiplayer Lobby
 
@@ -37,6 +45,10 @@ A [Z-Machine](http://inform-fiction.org/zmachine/) interpreter for Grey Hack.
 
 A lobby server that allows multiple people to log into a single computer and play games together.  The games must be hosted on the server, but it's setup such that as long as the players have the basic lobby script running, they can run the game without any hassle.
 
+Supports:
+    * [connect-four](connect-four)
+    * [falling-bricks](falling-bricks)
+    * [tennis](tennis)
 
 # License
 

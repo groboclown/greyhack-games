@@ -190,6 +190,45 @@
     },
 
 
+    {
+        "$comment": "=================================================",
+        "type": "source",
+        "path": "/gameserver/Games/tennis/tennis.src",
+        "local": "../../tennis/multiplayer/tennis.src"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/tennis/about.txt",
+        "local": "../../tennis/multiplayer/about.txt"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/tennis/gameinfo.txt",
+        "local": "../../tennis/multiplayer/gameinfo.txt"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Games/tennis",
+        "recursive": true,
+        "owner": "game:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Games/tennis",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rx",
+        "other": ""
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Pending/tennis"
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Active/tennis"
+    },
+
 
     {
         "$comment": "=================================================",
