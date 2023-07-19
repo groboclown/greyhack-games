@@ -31,6 +31,12 @@ A [Z-Machine](http://inform-fiction.org/zmachine/) interpreter for Grey Hack.
 [connect-four](connect-four)
 
 
+## Multiplayer Lobby
+
+[multiplayer](multiplayer)
+
+A lobby server that allows multiple people to log into a single computer and play games together.  The games must be hosted on the server, but it's setup such that as long as the players have the basic lobby script running, they can run the game without any hassle.
+
 
 # License
 
