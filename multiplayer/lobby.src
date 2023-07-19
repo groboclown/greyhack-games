@@ -14,6 +14,7 @@ end if
 if CONTROLLER_FILE == null or CONTROLLER_FILE.is_binary then
     exit("Could not set up controller file " + CONTROLLER_FILENAME)
 end if
+CONTROLLER_FILE.set_content("")
 
 main = function()
     if params.len != 2 or params.indexOf("-h") != null or params.indexOf("--help") != null then
@@ -61,7 +62,10 @@ main = function()
         // Lobby
         if state == 0 then
             // In the lobby
-            if joinedGame != null then joinedGame.Leave()
+            if joinedGame != null then
+                joinedGame.Disconnect()
+                joinedGame = null
+            end if
             if lobby == null then
                 lobby = server.EnterLobby(userHandle, false)
                 if lobby == null then
@@ -78,12 +82,12 @@ main = function()
                 when = message[0]
                 name = message[1]
                 msg = message[2]
-                if name == "/game/" then
-                    print("G:<color=#10ff60>" + msg)
+                if name[0] == "/" then
+                    print("G:" + when + " <color=#10ff60>" + msg)
                 else if msg[:7] == "/emote " then
-                    print("P:<color=#808000>" + name + " (" + when + ") <i><noparse>" + msg[7:] + "</noparse>")
+                    print("P:" + when + " <color=#808000>" + name + " <i><noparse>" + msg[7:] + "</noparse>")
                 else
-                    print("P:<color=#808000>" + name + " (" + when + "): <noparse>" + msg + "</noparse>")
+                    print("P:" + when + " <color=#808000>" + name + ": <noparse>" + msg + "</noparse>")
                 end if
             end for
             cmd = NextCommand()
@@ -238,16 +242,16 @@ main = function()
             end if
             // Pull messages and post them
             for message in joinedGame.PullMessages
-                // TODO assign each player a unique number.
+                // TODO assign each player a unique color.
                 when = message[0]
                 name = message[1]
                 msg = message[2]
-                if name == "/game/" then
-                    print("G:<color=#10ff60>" + msg)
+                if name[0] == "/" then
+                    print("G:" + when + " <color=#10ff60>" + msg)
                 else if msg[:7] == "/emote " then
-                    print("P:<color=#808000>" + name + " (" + when + ") <i><noparse>" + msg[7:] + "</noparse>")
+                    print("P:" + when + " <color=#808000>" + name + " <i><noparse>" + msg[7:] + "</noparse>")
                 else
-                    print("P:<color=#808000>" + name + " (" + when + "): <noparse>" + msg + "</noparse>")
+                    print("P:" + when + " <color=#808000>" + name + ": <noparse>" + msg + "</noparse>")
                 end if
             end for
 
@@ -300,8 +304,12 @@ main = function()
                     end if
 
                 // ----------------------------------------------------
-                // TODO /users list people in the pending game + their status.
-                // ----------------------------------------------------
+                // List people in the pending game + their status.
+                else if words[0] == "/users" then
+                    res = joinedGame.FetchPlayerStatus
+                    for name in res.indexes
+                        print("<color=#4040ff>" + name + " : " + res[name])
+                    end for
 
                 // ----------------------------------------------------
                 // Help
@@ -312,6 +320,7 @@ main = function()
                     print("  <color=#808080>/help</color>     This text.")
                     print("  <color=#808080>/leave</color>    Leave this pending game and go back to the lobby.")
                     print("  <color=#808080>/lobby</color>    Leave this pending game and go back to the lobby.")
+                    print("  <color=#808080>/users</color>    List of players in this pending game instance.")
                     print("  <color=#808080>/quit</color>     Quit the server.")
                     print("  <color=#808080>/about</color>    Describe this game.")
                     print("  <color=#808080>/status (status)</color>  Set your status.  Used to indicate whether you're ready to play.")
@@ -786,11 +795,11 @@ GameServer.Lobby.PullMessages = function()
                 ret.push([now, gpn, "/emote (new) " + status, epoch])
             end if
         end for
-        for name in prevGameState.indexes
-            ret.push([now, name, "/emote (closed)", epoch])
-        end for
     end for
-    // Chat messages.
+    for name in prevGameState.indexes
+        ret.push([now, name, "/emote (closed)", epoch])
+    end for
+// Chat messages.
     ret = ret + self.chatRoom.PullMessages
 
     // sort by date (index [3] in each item).
@@ -1105,6 +1114,7 @@ GameServer.JoinedInstance.FetchPlayerStatus = function()
     if self.server == null or self.pendingGame == null then return {}
     players = self.pendingGame.Fetch
     if players.hasIndex(self.playerName) then players.remove(self.playerName)
+    self.knownPlayerState = players
     return players
 end function
 
@@ -1116,7 +1126,42 @@ end function
 
 // JoinedInstance.PullMessages Fetch messages for display.
 GameServer.JoinedInstance.PullMessages = function()
-    // TODO fetch messages
+    if self.server == null or self.chatRoom == null then return []
+    ret = []
+    now = current_date
+    epoch = dateEpoch(now)
+
+    // Server state change
+    prevState = self.lastKnownState
+    newState = self.InstanceStatus
+    if newState != prevState then
+        ret.push([now, "/state/", "Game state now " + newState, epoch])
+    end if
+    self.lastKnownState = newState
+
+    // Player state changes.
+    prevPlayerState = self.knownPlayerState
+    players = self.FetchPlayerStatus
+    for playerName in players.indexes
+        pstate = players[playerName]
+        if prevPlayerState.hasIndex(playerName) then
+            if prevPlayerState[playerName] != pstate then
+                ret.push([now, playerName, "/empte changed state to " + pstate, epoch])
+            end if
+            prevPlayerState.remove(playerName)
+        else
+            ret.push([now, playerName, "/emote joined the instance.", epoch])
+        end if
+    end for
+    for name in prevPlayerState.indexes
+        ret.push([now, name, "/emote left the instance.", epoch])
+    end for
+    // Chat messages.
+    ret = ret + self.chatRoom.PullMessages
+
+    // sort by date (index [3] in each item).
+    QuickSort(ret, @String3AscOrder)
+    return ret
 end function
 
 GameServer.JoinedInstance.PostMessage = function(msg)
@@ -1158,11 +1203,42 @@ GameServer.JoinedInstance.joinServer = function()
         return
     end if
 
-    // TODO ensure the game is active
-    // TODO ensure the player has the client file compiled.
-    // TODO setup the shared object.
-    // TODO launch the client.
-    // TODO close off this instance.
+    if self.InstanceStatus != "active" then
+        print("Error: instance is no longer active, but '" + self.InstanceStatus + "'")
+        return
+    end if
+
+    file = self.server.getOrMkFile(self.server.mkFilename(self.pendingGame.activeDir, self.playerName))
+    if file == null then
+        self.server.rmTree(self.pendingGame.activeDir)
+        print("Error: failed to join the active game")
+        return
+    end if
+    file.set_content("player")
+
+    if self.chatRoom != null then self.chatRoom.Disconnect()
+    self.chatRoom = null
+
+    // Set up the shared object.
+    //   This breaks all kinds of OO rules.
+    obj = get_custom_object
+    obj.gameDir = self.pendingGame.activeDir[0] + "/" + self.pendingGame.activeDir[1]
+    obj.server = self.server.server.host_computer
+    obj.controller = globals.CONTROLLER_FILE
+    obj.playerName = self.playerName
+
+    // Launch the game.
+    if get_shell.launch(hostFile.path) != true then
+        print("Failed to launch the client program " + hostFile.path)
+    end if
+
+    // The game execution completed.  Now clean up after ourself.
+    self.server.rmFile(self.server.mkFilename(self.pendingGame.activeDir, self.playerName))
+
+    // Then close this object off.  It can't be used again.
+    self.pendingGame.close()
+    self.server = null
+    self.pendingGame = null
 end function
 
 GameServer.JoinedInstance.hostServer = function()
@@ -1209,10 +1285,17 @@ GameServer.JoinedInstance.hostServer = function()
     file = self.server.getOrMkFile(self.server.mkFilename(self.pendingGame.activeDir, ".host.txt"))
     if file == null then
         self.server.rmTree(self.pendingGame.activeDir)
-        print("Error: failed to construct the active game directory")
+        print("Error: failed to construct the active game directory correctly")
         return
     end if
     file.set_content(content)
+    file = self.server.getOrMkFile(self.server.mkFilename(self.pendingGame.activeDir, self.playerName))
+    if file == null then
+        self.server.rmTree(self.pendingGame.activeDir)
+        print("Error: failed to construct the active game directory accurately")
+        return
+    end if
+    file.set_content("host")
 
     if self.chatRoom != null then self.chatRoom.Disconnect()
     self.chatRoom = null
@@ -1224,7 +1307,7 @@ GameServer.JoinedInstance.hostServer = function()
     // Set up the shared object.
     //   This breaks all kinds of OO rules.
     obj = get_custom_object
-    obj.gameDir = self.pendingGame.activeDir
+    obj.gameDir = self.pendingGame.activeDir[0] + "/" + self.pendingGame.activeDir[1]
     obj.server = self.server.server.host_computer
     obj.controller = globals.CONTROLLER_FILE
     obj.playerName = self.playerName

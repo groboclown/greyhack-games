@@ -1,0 +1,312 @@
+chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+Config = {}
+Config.New = function()
+	ret = new Config
+	ret.server = get_custom_object.server
+	ret.controller = get_custom_object.controller
+	ret.controllerIdx = ""
+	ret.playerName = get_custom_object.playerName
+	ret.gameDir = get_custom_object.gameDir
+	hostFile = ret.server.File(ret.gameDir + "/.host.txt")
+	if hostFile == null then
+        user_input("Bad server setup: no host file (" + ret.gameDir + "/.host.txt)")
+        exit("Bad server setup: no host file")
+    end if
+
+	retryCount = 30
+	while retryCount > 0
+		ret.players = hostFile.get_content.split(char(10))
+		if ret.players.len == 2 then break
+		wait(1.0)
+	end while
+	if ret.players.len != 2 then exit("Timed out waiting for other player to join.")
+
+	ret.server.touch(ret.gameDir, ret.playerName + ".play.txt")
+	ret.myPlayFile = ret.gameDir + "/" + ret.playerName + ".play.txt"
+	ret.myPlays = []
+	ret.theirPlays = []
+
+	if ret.players[0] == ret.playerName then
+		ret.isHost = true
+		ret.myPlayerIdx = 0
+		ret.theirPlayFile = ret.gameDir + "/" + ret.players[1] + ".play.txt"
+		ret.theirPlayerIdx = 1
+        ret.theirName = ret.players[1]
+	else
+		ret.isHost = false
+		ret.myPlayerIdx = 1
+		ret.theirPlayFile = ret.gameDir + "/" + ret.players[0] + ".play.txt"
+		ret.theirPlayerIdx = 0
+        ret.theirName = ret.players[0]
+	end if
+
+	ret.currentPlayerIdx = 0
+
+    // Clean the controller state
+    ret.ReadKeyb
+
+	return ret
+end function
+
+Config.ReadKeyb = function()
+	val = self.controller.get_content
+	if val == "exit" then return [2, ""]
+	pos = val.indexOf("|")
+	if pos == null then return null
+	idx = val[:pos]
+	if idx != self.controllerIdx then
+		self.controllerIdx = idx
+		if val[pos+1] == "!" then return [1, val[pos+2:]]
+		return [0, val[pos+2:]]
+	end if
+	return null
+end function
+
+Config.LoadPlays = function
+    file = self.server.File(self.theirPlayFile)
+    if file != null then
+        content = file.get_content
+        if content != null then
+            plays = content.split(char(10))
+            if plays.len != self.theirPlays.len then
+                self.theirPlays = plays
+                return plays
+            end if
+        end if
+    end if
+    return null
+end function
+
+Config.SavePlay = function(play)
+	self.myPlays.push(play)
+	file = self.server.File(self.myPlayFile)
+	if file == null then exit("Play file removed; aborting game.")
+	res = file.set_content(join(self.myPlays, char(10)))
+	if res isa string then exit("Failed writing to play file: " + res)
+end function
+
+Config.IsMyTurn = function()
+    return self.currentPlayerIdx == self.myPlayerIdx
+end function
+
+// ================================================================
+
+GameBoard = {}
+GameBoard.New = function()
+    // Define the size of the game board
+    ret = new GameBoard
+    ret.rows = 6
+    ret.cols = 7
+
+    // Define the player symbols
+    ret.playerMarkers = [
+        "<mark=#FF0000>X</mark>", // red
+        "<mark=#FFD700>O</mark>", // yellow
+    ]
+
+    ret.board = []
+	for r in range(1, ret.rows)
+    	row = []
+    	for c in range(1, ret.cols)
+       		row.push(" ")
+    	end for
+    	ret.board.push(row)
+	end for
+    return ret
+end function
+
+// Print the current state of the game board
+GameBoard.PrintBoard = function(footer)
+	//clear_screen
+	mega = ""
+	help_line = "<indent=5%><size=20>  "
+	small = " "
+	large = "  "
+	i = 1
+	stopme = false
+    for row in self.board
+        row_output = "<indent=5%><size=20>"
+		line_seperator = "<indent=5%><size=20> +"
+        for cell in row
+            row_output = row_output + " | " + cell
+			line_seperator = line_seperator + "---+"
+			if not stopme then
+				if i < 10 then
+					help_line = help_line + " " + i + large
+				else
+					help_line = help_line + " " + i + small
+				end if
+				i = i + 1
+			end if
+        end for
+        stopme = true
+		mega = mega + char(10) +  row_output + " |" + char(10) + line_seperator
+    end for
+	mega = mega + char(10) + help_line + char(10) + footer
+	print(mega, 1)
+end function
+
+GameBoard.IsFull = function()
+    for row in self.board
+        for cell in row
+            if cell == " " then return false
+        end for
+    end for
+    return true
+end function
+
+GameBoard.AddTokenTo = function(player, column)
+    // row 0 is at the top.  So scan backwards for a blank spot.
+    rowIdx = self.rows
+    while rowIdx > 0
+        rowIdx = rowIdx - 1
+        row = self.board[rowIdx]
+        if row[column] == " " then
+            row[column] = self.playerMarkers[player]
+            return rowIdx
+        end if
+    end while
+    return -1
+end function
+
+GameBoard.ForceMove = function(player, row, column)
+    self.board[row][column] = self.playerMarkers[player]
+end function
+
+// Check if a player has won the game.
+GameBoard.CheckWinner = function(playerIdx)
+    player = self.playerMarkers[playerIdx]
+
+    // Check for horizontal win
+	for row in range(0, self.rows - 1)
+		for col in range(0, self.cols - 4)
+			if self.board[row][col] == player then
+				if self.board[row][col+1] == player and
+                    self.board[row][col+2] == player and
+                    self.board[row][col+3] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+	
+	// Check for vertical win
+	for row in range(0, self.rows - 4)
+		for col in range(0, self.cols - 1)
+			if self.board[row][col] == player then
+				if self.board[row+1][col] == player and
+                    self.board[row+2][col] == player and
+					self.board[row+3][col] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+
+	// Check for diagonal win (top-left to bottom-right)
+	for row in range(0, self.rows - 4)
+		for col in range(0, self.cols - 4)
+			if self.board[row][col] == player then
+				if self.board[row+1][col+1] == player and
+                    self.board[row+2][col+2] == player and
+					self.board[row+3][col+3] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+
+	// Check for diagonal win (bottom-left to top-right)
+	for row in range(2, self.rows - 1)
+		for col in range(0, self.cols - 4)
+			if self.board[row][col] == player then
+				if self.board[row-1][col+1] == player and
+                    self.board[row-2][col+2] == player and
+					self.board[row-3][col+3] == player then
+					return true
+				end if
+			end if
+		end for
+	end for
+	return false
+end function
+
+TURN_TIMEOUT = 60.0
+
+main = function(config)
+    board = GameBoard.New()
+
+    endTurn = time + TURN_TIMEOUT
+    footer = ""
+
+    // Play the game.
+    while true
+        wait(0.5)  // needs to be > 0.2
+        remaining = floor(endTurn - time)
+
+        if config.IsMyTurn then
+            if remaining < 0 then
+                exit("You forfeited the game by taking too long to play.")
+            end if
+
+            content = footer + char(10) + "Enter a column number to play in (1 - " + board.cols + ") (" + remaining + " seconds left)"
+            board.PrintBoard(content)
+
+
+            res = config.ReadKeyb
+            if res == null then continue  // no input
+
+            enteredCol = res[1].to_int
+            if enteredCol isa number and enteredCol >= 1 and enteredCol <= board.cols then
+                // Place the player's symbol in the selected row and column
+                rowIdx = board.AddTokenTo(config.myPlayerIdx, enteredCol - 1)
+                if rowIdx < 0 then
+                    footer = "Column full.  Try again."
+                else
+                    config.SavePlay("" + (rowIdx + 1) + "." + enteredCol)
+                    if board.CheckWinner(config.myPlayerIdx) then
+                        exit("You win!")
+                    end if
+                    config.currentPlayerIdx = config.theirPlayerIdx
+                    endTurn = time + TURN_TIMEOUT
+                end if
+            else
+                footer = "Invalid column number selected.  Try again."
+            end if
+
+        else
+            if remaining < 0 then
+                exit(config.theirName + " forfeited the game by taking too long to play.")
+            end if
+
+            plays = config.LoadPlays()
+            if plays != null and plays.len > 0 then
+                playPos = plays[-1].split(".")
+                if playPos.len != 2 then
+                    footer = config.theirName + " played an invalid value.  Assume their client is bad."
+                else
+                    rowIdx = playPos[0].to_int
+                    colIdx = posPlay[1].to_int
+                    if not rowIdx isa number or colIdx isa number or rowIdx < 1 or colIdx < 1 or rowIdx > board.rows or colIdx > board.cols then
+                        footer = config.theirName + " played a weird value.  Assume their client is bad."
+                    else
+                        board.ForceMove(config.theirPlayerIdx, rowIdx - 1, colIdx - 1)
+                        if board.CheckWinner(config.theirPlayerIdx) then
+                            exit(config.theirName + " wins!")
+                        end if
+                        config.currentPlayerIdx = config.myPlayerIdx
+                        endTurn = time + TURN_TIMEOUT
+                    end if
+                end if
+            end if
+
+            content = footer + " ... waiting on " + config.theirName + " to play ... " + remaining + " seconds left"
+            board.PrintBoard(content)
+        end if
+
+    end while
+end function
+
+
+main(Config.New())

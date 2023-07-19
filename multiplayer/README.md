@@ -17,7 +17,7 @@ service=(service name, one of 'ftp' or 'ssh')
 dir=(server's absolute game directory)
 ```
 
-First, you launch the `controller` program in one terminal.
+First, you launch the `controller` program in one terminal.  This will be what you type in to send commands to the lobby.
 
 Second, you launch the `lobby` program in a second terminal as:
 
@@ -27,15 +27,24 @@ $ lobby configfile.txt MyHandle
 
 You interact with the lobby through the controller terminal.  *Make sure you disconnect nicely, or you won't be able to log in again under that handle without some server surgery.*
 
-(TODO include instructions for interacting in the lobby, joining a game, and hosting a game)
+The lobby tool allows you to talk with other players on the server in between games, host a new instance of a game, join a pending instance of a game, and start a game with all the players.
+
+The `controller` runs in either key mode or line mode.  Key mode reads each key you type into the terminal, and line mode reads until you press the enter key.  The lobby requires line mode, while some games require key mode.
+
 
 ## Running a Game Lobby Server
 
-(TODO document `owner.gs` and expectations around the server state before it runs.)
+A game lobby server requires these things:
+    * A computer with a public network address;
+    * either FTP or SSH server running on it;
+    * at least one user account for players to use to log into the server;
+    * a set of files.
+
+The [`example-server`](example-server) shows a [import](https://github.com/groboclown/greyhack-importer) compatible layout for setting up a server's users, groups, and file structure.  It also installs some sample games.
 
 ## Uploading Games
 
-(TODO document the `uploader.gs` script.)
+To upload a game, you
 
 ### Game Requirements
 
