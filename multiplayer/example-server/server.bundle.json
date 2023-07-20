@@ -69,6 +69,27 @@
     },
 
     {
+        "type": "source",
+        "local": "import.src",
+        "path": "/gameserver/import.src",
+        "$comment": [
+            "This file is found from https://github.com/groboclown/greyhack-importer"
+        ]
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/import.src",
+        "user": "rw",
+        "group": "r",
+        "other": "r"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/about.txt",
+        "owner": "root:game"
+    },
+
+    {
         "type": "folder",
         "path": "/gameserver/Lobby"
     },

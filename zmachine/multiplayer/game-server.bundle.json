@@ -1,0 +1,85 @@
+[
+    {
+        "type": "about",
+        "description": [
+            "Adds the Mini-Zork game to the game server.",
+            "The game file is really big, such that it's unweildy to add with the main game server."
+        ]
+    },
+
+
+    {
+        "$comment": "=================================================",
+        "type": "file",
+        "path": "/gameserver/Games/minizork/minizork.bundle.0",
+        "local": "minizork.bundle.0"
+    },
+    {
+        "$comment": "=================================================",
+        "type": "file",
+        "path": "/gameserver/Games/minizork/minizork.bundle.1",
+        "local": "minizork.bundle.1"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/minizork/about.txt",
+        "local": "about.txt"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/minizork/gameinfo.txt",
+        "local": "gameinfo.txt"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Games/minizork",
+        "recursive": true,
+        "owner": "game:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Games/minizork",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rx",
+        "other": ""
+    },
+
+    {
+        "type": "folder",
+        "path": "/gameserver/Pending/minizork"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Pending/minizork",
+        "recursive": true,
+        "owner": "player:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Pending/minizork",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rwx",
+        "other": ""
+    },
+
+    {
+        "type": "folder",
+        "path": "/gameserver/Active/minizork"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Active/minizork",
+        "recursive": true,
+        "owner": "player:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Active/minizork",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rwx",
+        "other": ""
+    }    
+]

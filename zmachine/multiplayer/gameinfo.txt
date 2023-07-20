@@ -1,0 +1,7 @@
+name=Mini-Zork
+desc=A free, smaller version of the 80's classic Zork text adventure.
+min-players=1
+max-players=1
+client=bundle:minizork.bundle.0,minizork.bundle.1
+# client-bin must match what's in the bundle.
+client-bin=~/Downloads/minizork

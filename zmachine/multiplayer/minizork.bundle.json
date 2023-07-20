@@ -1,0 +1,13 @@
+[
+    {
+        "type": "about",
+        "description": [
+            "Creates the minizork bundle for use by the game-server.bundle.json bundle."
+        ]
+    },
+    {
+        "type": "compile",
+        "local": "minizork.gs",
+        "target": "~/Downloads/minizork"
+    }
+]

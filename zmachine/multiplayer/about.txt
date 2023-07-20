@@ -1,0 +1,6 @@
+<size=120%>Mini-Zork
+Play the free version of Zork, right here on the server.
+
+Requires:
+    * Just one person.  And only one person.
+    * Currently, controls aren't like normal multiplayer games.  You type in the game window itself.

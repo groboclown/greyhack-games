@@ -2,7 +2,6 @@
 // People join the lobby, and allows them to start new multiplayer games.
 
 CONTROLLER_FILENAME = home_dir + "/.controller.txt"
-IMPORT_BIN = home_dir + "/bin/import"
 DOWNLOAD_DIR = home_dir + "/Downloads"
 WAIT_TIME = 1.0
 
@@ -56,14 +55,20 @@ main = function()
             outer.lastWhen = when
         end if
         name = msg[1]
-        msg = msg[2]
         if name[0] == "/" then
-            print("<color=#10ff60>" + name + "</color> <color=#aaa>" + msg)
-        else if msg[:7] == "/emote " then
-            print("<i><color=#808000>" + name + "</color> <noparse>" + msg[7:] + "</noparse>")
+            nameText = "<color=#10ff60>" + name + "</color>"
         else
-            print("<color=#808000>" + name + "</color><color=#aaa>: <noparse>" + msg + "</noparse>")
+            // TODO it'd be nice to have unique colors per player.
+            nameText = "<color=#808000>" + name + "</color>"
         end if
+
+        message = msg[2]
+        if message[:7] == "/emote " then
+            text = "<i>" + nameText + " <noparse>" + message[7:].replace("<noparse", "!nope!") + "</noparse>"
+        else
+            text = name + "<color=#aaa>: <noparse>" + message.replace("<noparse", "!nope!") + "</noparse>"
+        end if
+        print(text)
     end function
 
     server = GameServer.LoadFrom(params[0])
@@ -180,6 +185,7 @@ main = function()
                                 print("<color=#20ff40>Hosting Game " + game.Name + ", instance " + joinedGame.InstanceName)
                                 lobby.PostMessage("/emote started game " + game.Name + " instance " + joinedGame.InstanceName)
                                 lobby.Disconnect()
+                                print(game.About)
                                 lobby = null
                             end if
                         end if
@@ -202,6 +208,7 @@ main = function()
                                 state = 2
                                 print("<color=#20ff40>Joined Game " + game.Name + ", instance " + joinedGame.InstanceName)
                                 lobby.Disconnect()
+                                print(game.About)
                                 lobby = null
                             end if
                         end if
@@ -481,6 +488,9 @@ GameServer.Server.KnownGames = function()
     return self.knownGames
 end function
 
+// --------------------------------------------------------------------
+// A mix of private and protected methods / consts.
+
 GameServer.msgSep = char(1)
 GameServer.maxQueueLen = 100
 GameServer.Server.post = function(location, action)
@@ -634,6 +644,34 @@ GameServer.Server.rmTree = function(baseDir)
             visited[parent.path] = true
         end if
     end while
+end function
+
+// copies the mkFilename remote file to the local file path.
+// The local path's directory must already exist.
+// Returns string on error, local file on okay.
+GameServer.Server.copyToLocal = function(remoteFilename, localFileDirname, localFilename)
+    srvFile = self.getExistingFile(remoteFilename)
+    if srvFile == null or srvFile.is_binary then
+        return "Cannot find server game file '" + remoteFilename[1] + "'."
+    end if
+    // Local computer file, not server file.
+    get_shell.host_computer.touch(localFileDirname, localFilename)
+    file = get_shell.host_computer.File(localFileDirname + "/" + localFilename)
+    if file == null then
+        return "No write access to directory '" + localFileDirname + "'."
+    end if
+    content = srvFile.get_content
+    if content == null then
+        return "No read access to '" + srvFile.path + "'."
+    end if
+    file.set_content(content)
+    if file.get_content == null then
+        return "No write access to '" + file.path + "'."
+    end if
+    if file.get_content != content then
+        return "Failed to write to '" + file.path + "'."
+    end if
+    return file
 end function
 
 // ====================================================================
@@ -948,14 +986,58 @@ end function
 GameServer.GameInfo.buildBin = function(sourceFile, sourceBin = null)
     // This is ... special.  Due to the game file information properties.
     // source file is the name of the file, which must be in the gameDir directory.
-    srvFile = self.server.getExistingFile(self.server.mkFilename(self.gameDir, sourceFile))
-    if srvFile == null or srvFile.is_binary then return null
-    // Local computer file, not server file.
-    get_shell.host_computer.touch(DOWNLOAD_DIR, srvFile.name)
-    file = get_shell.host_computer.File(DOWNLOAD_DIR + "/" + srvFile.name)
-    if file == null then return null
-    file.set_content(srvFile.get_content)
-    if sourceFile[-4:] == ".src" then
+    if sourceFile[:7] == "bundle:" then
+        // One or more bundle files.
+        if sourceBin == null then
+            print("Invalid game configuration.  Bundle files must define a 'bin' location.")
+            return null
+        end if
+        if sourceBin[:2] == "~/" or sourceBin[:2] == "-/" then
+            sourceBin = home_dir + sourceBin[1:]
+        end if
+
+        // a bit of a bad practice...
+        importerSrc = self.server.copyToLocal(self.server.mkFilename(self.server.serverRootDir, "import.src"), DOWNLOAD_DIR, "import.src")
+        if importerSrc isa string then
+            print(importerSrc + "  Aborting.")
+            return null
+        end if
+        res = get_shell.build(importerSrc.path, DOWNLOAD_DIR)
+        if res != "" then
+            print("Error: failed to build importer: " + res)
+            return null
+        end if
+        importerBin = get_shell.host_computer.File(DOWNLOAD_DIR + "/import")
+        if importerBin == null then
+            print("Failed to find importer after build.")
+            return null
+        end if
+
+        // bundleFiles = ["--debug"]
+        bundleFiles = []
+        for bundleName in sourceFile[7:].split(",")
+            file = self.server.copyToLocal(self.server.mkFilename(self.gameDir, bundleName), DOWNLOAD_DIR, bundleName)
+            if file isa string then
+                print(file + "  Aborting.")
+                return null
+            end if
+            bundleFiles.push(file.path)
+        end for
+        print("DEBUG Launching '" + importerBin.path + "' '" + join(bundleFiles, " ") + "'")
+        get_shell.launch(importerBin.path, join(bundleFiles, " "))
+        print("DEBUG Using compiled file " + sourceBin)
+        ret = get_shell.host_computer.File(sourceBin)
+        if ret == null then
+            print("Bundle did not create executable at '" + sourceBin + "'.  Aborting")
+        end if
+        return ret
+
+    else if sourceFile[-4:] == ".src" then
+        file = self.server.copyToLocal(self.server.mkFilename(self.gameDir, sourceFile), DOWNLOAD_DIR, sourceFile)
+        if file isa string then
+            print(file + "  Aborting.")
+            return null
+        end if
         if sourceBin == null then sourceBin = file.path[:-4]
         parent = sourceBin[:sourceBin.lastIndexOf("/")]
         res = get_shell.build(file.path, parent)
@@ -971,13 +1053,7 @@ GameServer.GameInfo.buildBin = function(sourceFile, sourceBin = null)
             print("Error: compiled " + sourceFile + ", but couldn't find the compiled file")
         end if
         return file
-    else if sourceFile[-7:] == ".bundle" then
-        if sourceBin == null then return null
-        if sourceBin[:2] == "~/" or sourceBin[:2] == "-/" then
-            sourceBin = home_dir + sourceBin[1:]
-        end if
-        get_shell.launch(IMPORT_BIN, file.path)
-        return get_shell.host_computer.File(sourceBin)
+
     else
         print("Error: Don't know how to build source file " + sourceFile)
         return null

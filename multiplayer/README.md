@@ -74,7 +74,10 @@ An example for interacting with the server and other players is in the [`gamelib
 
 All sources for the game must be located in the owning game directory (`Games/(simple game name)`).
 
-The source file uploaded must either have a `.src` extension, which means it must be a self-contained source file.  If it ends with `.bundle`, then it must be a constructed bundle created by the [importer tool](https://github.com/groboclown/greyhack-importer).
+There are two formats of files supported.
+
+* A single source file, which must have a `.src` extension.  This is compiled in-place.
+* A bundle file or files.  A bundle has the form `bundle:(file1),(file2),...`, listing out the files (without directory parts) of the game bundle files.  These will be passed as files to the [importer tool](https://github.com/groboclown/greyhack-importer).
 
 
 ## Underlying Server Design

@@ -11,5 +11,4 @@
         "local": "src/main.gs",
         "target": "~/bin/zmachine"
     }
-
 ]
