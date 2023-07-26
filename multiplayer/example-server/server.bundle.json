@@ -4,7 +4,9 @@
         "description": [
             "General bundle for those wanting to run a server.",
             "It performs the file setup that the owner and uploader perform.",
-            "It creates a general 'player' user for logging in and access, and a 'game' user for uploading games."
+            "It creates a general 'player' user for logging in and access, and a 'game' user for uploading games.",
+            "It installs an FTPD server, but not a good one.  You may want to change that.",
+            "It also adds the client controller.src and lobby.src files, to allow users to get them easily."
         ]
     },
     {
@@ -100,7 +102,43 @@
     },
     {
         "type": "chown",
-        "path": "/gameserver/about.txt",
+        "path": "/gameserver/import.src",
+        "owner": "root:game"
+    },
+
+    {
+        "type": "source",
+        "local": "../controller.src",
+        "path": "/gameserver/controller.src"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/controller.src",
+        "user": "rw",
+        "group": "r",
+        "other": "r"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/controller.src",
+        "owner": "root:game"
+    },
+
+    {
+        "type": "source",
+        "local": "../lobby.src",
+        "path": "/gameserver/lobby.src"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/lobby.src",
+        "user": "rw",
+        "group": "r",
+        "other": "r"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/lobby.src",
         "owner": "root:game"
     },
 

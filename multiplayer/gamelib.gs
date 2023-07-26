@@ -104,7 +104,7 @@ GameLib.NewMessagesFrom = function(name)
     if self.server == null then return []
     locStr = self.gameDir + "/" + name
     maxRecvId = -1
-    if self.recvId.hasIndex(name) then maxRecvId = -1
+    if self.recvId.hasIndex(name) then maxRecvId = self.recvId[name]
     prevRecvId = maxRecvId
     file = self.server.File(locStr)
     if file == null then return []
