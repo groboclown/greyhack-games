@@ -143,7 +143,7 @@ end function
 // Returns a string on error, null on no error.
 GameLib.Post = function(message, ref = null)
     if self.server == null then return "not connected"
-    if message.indexOf(GameServer.msgSep) != null then return "invalid message content"
+    if message.indexOf(GameLib.msgSep) != null then return "invalid message content"
     if ref == null then ref = self.PlayerName
     idx = 0
     if self.postId.hasIndex(ref) then idx = self.postId[ref]
@@ -160,7 +160,7 @@ GameLib.Post = function(message, ref = null)
     locStr = self.gameDir + "/" + ref
     content = ""
     for msg in queue
-        content = content + GameServer.msgSep + msg[0] + "." + msg[1] + "." + msg[2]
+        content = content + GameLib.msgSep + msg[0] + "." + msg[1] + "." + msg[2]
     end for
     content = content[1:]  // strip leading separator
 
@@ -185,7 +185,7 @@ GameLib.dateEpoch = function(dateStr)
     date = dateSegments[0].split("/")
     day = date[0]
     month = date[1]
-    if dateEpochMonths.hasIndex(month) then month = dateEpochMonths[month]
+    if GameLib.dateEpochMonths.hasIndex(month) then month = GameLib.dateEpochMonths[month]
     year = date[2]
     return year + month + day + dateSegments[1]
 end function

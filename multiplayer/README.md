@@ -40,7 +40,9 @@ A game lobby server requires these things:
     * at least one user account for players to use to log into the server;
     * a set of files.
 
-The [`example-server`](example-server) shows a [import](https://github.com/groboclown/greyhack-importer) compatible layout for setting up a server's users, groups, and file structure.  It also installs some sample games.
+The [`example-server`](example-server) shows a [import](https://github.com/groboclown/greyhack-importer) compatible layout for setting up a server's users, groups, file structure, and installs an FTP server (use with caution).  It also installs some sample games.
+
+You'll need to distribute a server connection file as outlined above.  The IP address can be discovered by running `ifconfig`.
 
 ## Uploading Games
 

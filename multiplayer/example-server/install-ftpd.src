@@ -1,0 +1,11 @@
+library_name = "libftp.so"
+library_location = "/lib/" + library_name
+daemon = include_lib(library_location)
+if not daemon then
+    get_shell.launch("/bin/apt-get", "update")
+    get_shell.launch("/bin/apt-get", "install " + library_name)
+    daemon = include_lib(library_location)
+end if
+if not daemon then exit("Error: Missing " + library_name + " library at " + library_location)
+output = daemon.install_service
+if output != true then exit(output)

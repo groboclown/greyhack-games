@@ -269,6 +269,7 @@ main = function()
                 joinedGame = null
                 print("Entering the lobby.")
                 state = 0
+                continue
             end if
 
             cmd = NextCommand()

@@ -1,0 +1,1084 @@
+// Example Multiplayer Game Library.
+LF = char(10)
+
+GameLib = {}
+
+// New Create a new GameLib object.  Returns null on error in the setup.
+GameLib.New = function(context=null)
+    if context == null then context = get_custom_object
+    ret = new GameLib
+    if not context.hasIndex("gameDir") or not context.hasIndex("server") or not context.hasIndex("controller") or not context.hasIndex("playerName") then
+        print("Invalid context object")
+        return null
+    end if
+
+    ret.gameDir = context.gameDir
+    ret.server = context.server
+    ret.controller = context.controller
+
+    // PlayerName the current game player's alias.
+    ret.PlayerName = context.playerName  // string
+
+    if not ret.gameDir isa string or typeof(ret.server) != "computer" or typeof(ret.controller) != "file" or not ret.PlayerName isa string then
+        print("Invalid context object format")
+        return null
+    end if
+
+    file = ret.server.File(ret.gameDir + "/.host.txt")
+    if file == null then return null
+
+    // PlayerOrder order of players in the game; the hosting player is first.
+    ret.PlayerOrder = file.get_content.split(LF)
+
+    // PlayerIndex the current player's index in the game.
+    ret.PlayerIndex = ret.PlayerOrder.indexOf(ret.PlayerName)
+    if ret.PlayerIndex == null then
+        print("Player '" + ret.PlayerName + "' not in game's player list.")
+        return null
+    end if
+
+    ret.ctrlIdx = ""
+    ret.postId = {}
+    ret.postQueue = {}
+    ret.recvId = {}
+
+    // IsHost true if this player hosted the game; false if joined the game.
+    ret.IsHost = ret.PlayerIndex == 0
+    return ret
+end function
+
+// WaitForPlayers Wait up to the number of seconds for all players to be present.
+//
+// Returns true on timeout waiting for players, false on all players found before the timeout.
+// When the check loops, the onWait function is called.  It should, at a minimum, call
+// `wait(0.5)` or something similar.
+GameLib.WaitForPlayers = function(onWait)
+    find = {}
+    for name in self.PlayerOrder
+        find[name] = true
+    end for
+
+    endTime = time + START_TIMEOUT
+    while time < endTime
+        check = {} + find
+        for name in check.indexes
+            file = self.server.File(self.gameDir + "/" + name)
+            if file != null then find.remove(name)
+        end for
+        if find.len <= 0 then return false
+        onWait(find)
+    end while
+    return true
+end function
+
+// NextCommand Read the next command from the controller.
+//
+// Returns null if there is no new command, or an array
+// [isKey (boolean), value].  If isKey is 1, then the value
+// is the name of the key (the enter key is 'Enter').  If
+// isKey is 0, then the value is the line entered.
+// If the isKey is 2, then the controller program has exited.
+GameLib.NextCommand = function()
+    val = self.controller.get_content
+    if val == "exit" then return [2, ""]
+    pos = val.indexOf("|")
+    if pos == null then return null
+    idx = val[:pos]
+    if idx != self.ctrlIdx then
+        // New command
+        self.ctrlIdx = idx
+        if val[pos+1] == "!" then return [1, val[pos+2:]]
+        return [0, val[pos+2:]]
+    end if
+    return null
+end function
+
+// NewMessagesFrom Pull the latest messages from a single name, in the form [datetime, message, epoch].
+//
+// This is useful for pulling non-player messages, such as the host actions.
+GameLib.NewMessagesFrom = function(name)
+    // pull all available messages from the location since the last pull.
+    if self.server == null then return []
+    locStr = self.gameDir + "/" + name
+    maxRecvId = -1
+    if self.recvId.hasIndex(name) then maxRecvId = -1
+    prevRecvId = maxRecvId
+    file = self.server.File(locStr)
+    if file == null then return []
+    res = file.get_content
+    if res == null then return []
+    ret = []
+    for message in res.split(GameLib.msgSep)
+        p1 = message.indexOf(".")
+        if p1 == null then continue
+        idx = message[:p1].to_int
+        if idx <= prevRecvId then continue
+        if idx > maxRecvId then maxRecvId = idx
+        p2 = message.indexOf(".", p1 + 1)
+        if p2 == null then continue
+        when = message[p1+1:p2]
+        ret.push([when, message[p2+1:], GameLib.dateEpoch(when)])
+    end for
+    self.recvId[name] = maxRecvId
+    return ret
+end function
+
+// Post Post a message to the server file.
+//
+// Returns a string on error, null on no error.
+GameLib.Post = function(message, ref = null)
+    if self.server == null then return "not connected"
+    if message.indexOf(GameLib.msgSep) != null then return "invalid message content"
+    if ref == null then ref = self.PlayerName
+    idx = 0
+    if self.postId.hasIndex(ref) then idx = self.postId[ref]
+    if self.postQueue.hasIndex(ref) then
+        queue = self.postQueue[ref]
+        if queue.len > GameLib.maxQueueLen then queue.pull()
+    else
+        queue = []
+        self.postQueue[ref] = queue
+    end if
+    queue.push([idx, current_date, message])
+    self.postId[ref] = idx + 1
+
+    locStr = self.gameDir + "/" + ref
+    content = ""
+    for msg in queue
+        content = content + GameLib.msgSep + msg[0] + "." + msg[1] + "." + msg[2]
+    end for
+    content = content[1:]  // strip leading separator
+
+    file = self.server.File(locStr)
+    if file == null then
+        self.server.touch(self.gameDir, ref)
+        file = self.server.File(locStr)
+        if file == null then return "failed to access '" + locStr + "'"
+    end if
+    res = file.set_content(content)
+    if res isa string then return res
+    return null
+end function
+
+// --------------------------------------------------------------------
+// Static utility functions and constants
+
+// Shuffle Shuffle the list items order.  Returns the input list.
+GameLib.Shuffle = function(data)
+    size = data.len
+    if size <= 0 then return data
+    for idx in range(0, size - 2)
+        // generate a number such that idx <= swapIdx < size
+        swapIdx = floor((rnd() * (size - idx))) + idx
+        // These cases shouldn't happen, but it's protection.
+        if swapIdx < idx then swapIdx = idx
+        if swapIdx >= size then swapIdx = size - 1
+        tmp = data[idx]
+        data[idx] = data[swapIdx]
+        data[swapIdx] = tmp
+    end for
+    return data
+end function
+
+// dateEpoch Static function that turns the current_date string into a sortable value.
+GameLib.dateEpoch = function(dateStr)
+    // Keeps everything as-is except the month (which is turned into a 2 digit number) and the order.
+    dateSegments = dateStr.split(" - ")
+    date = dateSegments[0].split("/")
+    day = date[0]
+    month = date[1]
+    if GameLib.dateEpochMonths.hasIndex(month) then month = GameLib.dateEpochMonths[month]
+    year = date[2]
+    return year + month + day + dateSegments[1]
+end function
+
+// QuickSort Sort the list (internally) using the comparison function.
+GameLib.QuickSort = function(list, comparison)
+    return GameLib.quickSort__entry(list, @comparison, 0, list.len - 1)
+end function
+
+GameLib.quickSort__entry = function(list, comparison, lo, hi)
+    if lo >= 0 and hi >= 0 and lo < hi then
+        p = GameLib.quickSort__partition(list, @comparison, lo, hi)
+        GameLib.quickSort__entry(list, @comparison, lo, p)
+        GameLib.quickSort__entry(list, @comparison, p + 1, hi)
+    end if
+end function
+
+GameLib.quickSort__partition = function(list, comparison, lo, hi)
+    pivot = list[floor((hi - lo) / 2) + lo]
+    i = lo - 1
+    j = hi + 1
+    while true
+        i = i + 1
+        while comparison(list[i], pivot) < 0
+            i = i + 1
+        end while
+        j = j - 1
+        while comparison(list[j], pivot) > 0
+            j = j - 1
+        end while
+        if i >= j then return j
+        tmp = list[i]
+        list[i] = list[j]
+        list[j] = tmp
+    end while
+end function
+
+// GameLib__string3AscOrder Sort by the third index of the two arrays.
+//    Strangely named to avoid issues with referencing functions in maps.
+GameLib__string3AscOrder = function(a, b)
+    if a[3] == b[3] then return 0
+    if a[3] < b[3] then return -1
+    return 1
+end function
+
+GameLib.dateEpochMonths = {
+    "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04", "May": "05", "Jun": "06",
+    "Jul": "07", "Aug": "08", "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+}
+GameLib.msgSep = char(1)
+GameLib.maxQueueLen = 100
+
+MAX_MESSAGE_COUNT = 30
+MAX_ACTION_COUNT = 20
+START_TIMEOUT = 60.0
+
+// ====================================================================
+// Game State
+//
+// Game state is stored in each client, but the host manages it.
+
+GameState = {}
+
+GameState.ctor = function()
+    ret = new GameState
+
+    // List of [datetime, player, action, text]
+    ret.Messages = []
+    // List of [datetime, player, action, text]
+    ret.Actions = []
+    ret.pendingActions = []
+    return ret
+end function
+
+// GameState.NewGuest Create a new game state loaded from a marshalled host state.
+GameState.NewGuest = function(hostState)
+    ret = GameState.ctor()
+    ret.Unmarshall(hostState)
+    return ret
+end function
+
+GameState.NewHost = function(orderedPlayerNames)
+    ret = GameState.ctor()
+
+    ret.VoteIndex = 0
+
+    // Vote Allows players to vote on something, such as start a new game or kick a player.
+    // If set, its elements are Type ("kick", "restart", "skip"), Player (player index or -1), Options
+    // (what the people can vote on), and Turn (the turn it was started on)
+    ret.Vote = null
+
+    // Turn whose turn it is to play.
+    // Picked randomly from the list of people.
+    ret.Turn = 0
+
+    // Stuff Specific to Uno.
+    // The active suit.
+    ret.Suit = "w"
+    ret.PlayDirection = 1
+    // If "stacking" rules are in play, then there needs to be a carry-over tally to keep track of.
+
+    // Each card is a map, containing 'Suit' (can be one of 'r', 'g', 'b', 'y', 'w', '4'),
+    // 'Number' ('0'-'9', 's' (skip), 'r' (reverse), 't' (draw 2), '*' (not a number)), and 'Score'.
+    
+    // Deck List of cards to draw.  Index 0 is the last card to draw.
+    ret.Deck = []
+
+    // Discard List of cards having been discarded.  Index 0 is the first card discarded.
+    ret.Discard = []
+
+    // Players List of each player, the index in the list is the player's index.
+    // Each item has: Index, Name, Score, Hand.
+    ret.Players = []
+
+    for idx in orderedPlayerNames.indexes
+        name = orderedPlayerNames[idx]
+        ret.Players.push({"Index": idx, "Name": name, "Score": 0, "Hand": [], "Vote": -1})
+    end for
+
+    ret.StartNewHand()
+
+    return ret
+end function
+
+// GameState.StartNewHand Start a new hand; resets the deck, discard pile, and player hands.
+GameState.StartNewHand = function()
+    self.Turn = floor(rnd(self.Players.len))
+    if self.Turn >= self.Players.len then self.Turn = self.Players.len - 1
+    self.PlayDirection = 1
+
+    self.Deck = [
+        // 4 wild
+        {"Suit": "w", "Number": "*", "Score": 50},
+        {"Suit": "w", "Number": "*", "Score": 50},
+        {"Suit": "w", "Number": "*", "Score": 50},
+        {"Suit": "w", "Number": "*", "Score": 50},
+
+        // 4 wild + draw 4
+        {"Suit": "4", "Number": "*", "Score": 50},
+        {"Suit": "4", "Number": "*", "Score": 50},
+        {"Suit": "4", "Number": "*", "Score": 50},
+        {"Suit": "4", "Number": "*", "Score": 50},
+    ]
+    for suit in ["r", "g", "b", "y"]
+        // 2018 modified rules.  There's a zero card, one per color.
+        self.Deck.push({"Suit": suit, "Number": "0", "Score": 0})
+        for card in [["1", 1], ["2", 2], ["3", 3], ["4", 4], ["5", 5], ["6", 6], ["7", 7], ["8", 8], ["9", 9], ["s", 20], ["r", 20], ["t", 20]]
+            self.Deck.push({"Suit": suit, "Number": card[0], "Score": card[1]})
+            self.Deck.push({"Suit": suit, "Number": card[0], "Score": card[1]})
+        end for
+    end for
+    GameLib.Shuffle(self.Deck)
+
+    self.Discard = []
+    for player in self.Players
+        player.Hand = []
+    end for
+    for handout in range(1, 7)
+        player.Hand.push(self.drawCard())
+    end for
+    self.Discard.push(self.drawCard())
+    self.Suit = self.Discard[-1].Suit
+    if self.Suit == "w" or self.Suit == "4" then
+        // TODO Should be player's choice
+        self.Suit = "r"
+    end if
+end function
+
+GameState.drawCard = function()
+    // If the deck is empty, then the discard deck is shuffled and put into the deck.
+    if self.Deck.len <= 0 then
+        self.Deck = self.Discard
+        self.Discard = []
+        GameLib.Shuffle(self.Deck)
+    end if
+    if self.Deck.len <= 0 then
+        return null
+    end if
+    return self.Deck.pop()
+end function
+
+GameState.recordAction = function(playerName, action)
+    self.pendingActions.push({"Player": playerName, "Action": action})
+end function
+
+// GameState.PlayerDrawCard Draws N cards and put into the player name's hand.
+// Returns true if the number of cards could not be drawn.
+GameState.PlayerDrawCard = function(playerName, count)
+    if count <= 0 then return false
+    for player in self.Players
+        if (playerName == null and player.Index == self.Turn) or (player.Name == playerName) then
+            for idx in range(1, count)
+                card = self.drawCard()
+                if card == null then
+                    idx = idx - 1
+                    if idx == 1 then
+                        self.recordAction(playerName, "drew the last card")
+                    else if idx == 0 then
+                        self.recordAction(playerName, "could not draw any more cards")
+                    else
+                        self.recordAction(playerName, "drew the last " + count + " cards")
+                    end if
+                    return true
+                end if
+                player.Hand.push(card)
+            end for
+            if count == 1 then
+                self.recordAction(playerName, "drew 1 card")
+            else
+                self.recordAction(playerName, "drew " + count + " cards")
+            end if
+            return false
+        end if
+    end for
+    return true
+end function
+
+// GameState.PlayerDiscard Player discards a card
+//
+// Does not check suitability of card being discarded.
+// Returns 'true' if the card could not be discarded.
+GameState.PlayerDiscard = function(playerName, cardSuit, cardNumber)
+    // Remove the last instance of the card.
+    for player in self.Players
+        if player.Name == playerName then
+            handLen = player.Hand.len
+            idx = handLen
+            while idx > 0
+                idx = idx - 1
+                card = player.Hand[idx]
+                if card.Suit == cardSuit and card.Number == cardNumber then
+                    if idx > 0 and idx < handLen - 1 then
+                        player.Hand = player.Hand[:idx] + player.Hand[idx+1:]
+                    else if idx <= 0 and idx < handLen - 1 then
+                        player.Hand = player.Hand[idx+1:]
+                    else if idx > 0 then
+                        player.Hand = player.Hand[:idx]
+                    else
+                        player.Hand = []
+                    end if
+                    
+                    if player.Hand.len == 0 then
+                        self.recordAction(playerName, "discarded their last card.")
+                    else if player.Hand.len == 1 then
+                        // No, there is no calling Uno.  The server forces it.
+                        self.recordAction(playerName, "discarded a card, and has 1 card left.")
+                    else
+                        self.recordAction(playerName, "discarded a card.")
+                    end if
+                    return false
+                end if
+            end while
+            return true
+        end if
+    end for
+    return true
+end function
+
+GameState.AdvanceTurn = function(withSkip, reverse)
+    if reverse then self.PlayDirection = self.PlayDirection * -1
+    nextTurn = self.Turn + (self.PlayDirection * withSkip)
+    if nextTurn < 0 then nextTurn = self.Players.len + nextTurn
+    if nextTurn >= self.Players.len then nextTurn = nextTurn - self.Players.len
+    // Clear the vote
+    self.state.Vote = null
+    for player in self.state.Players
+        player.Vote = -1
+    end for
+end function
+
+// GameState.Marshall Turn the game state into a text stream, for transmitting to other players.
+GameState.Marshall = function()
+    ret = "T=" + str(self.Turn) + ";C=" + str(self.Players.len) + ";S=" + self.Suit + ";O=" + self.PlayDirection + ";"
+    if self.Vote != null then
+        ret = "Vt=" + self.Vote.Type + ";Vp=" + str(self.Vote.Player) + ";Vo=" + join(self.Vote.Options, ",") + ";Vi=" + join(self.Vote.Index) + ";"
+    end if
+    for card in self.Deck
+        ret = ret + "D=" + card.Suit + card.Number + card.Score + ";"
+    end for
+    for card in self.Discard
+        ret = ret + "I=" + card.Suit + card.Number + card.Score + ";"
+    end for
+    for playerIdx in self.Players.indexes
+        pre = "P" + str(playerIdx) + ","
+        player = self.Players[playerIdx]
+        if player.Name.indexOf(";") != null then exit("Player names cannot contain a ';'")
+        ret = ret + pre + "N=" + player.Name + ";" + pre + "S=" + str(player.Score) + ";" + pre + "V=" + player.Vote + ";"
+        for card in player.Hand
+            ret = ret + "P" + str(playerIdx) + ",H=" + card.Suit + card.Number + card.Score + ";"
+        end for
+    end for
+    return ret
+end function
+
+// GameState.Unmarshall Load the marshalled game state into the current object.
+GameState.Unmarshall = function(data)
+    if not data isa string or data.len <= 0 then exit("Bad marshall format (0).")
+    parseNum = function(n, x)
+        ret = n.to_int
+        if not ret isa number then exit("Bad marshall format (3," + x + "="+n+").")
+        return ret
+    end function
+    parseCard = function(v, x)
+        return {"Suit": v[0], "Number": v[1], "Score": parseNum(v[2:], "s" + x + v)}
+    end function
+    self.Suit = ""
+    self.Deck = []
+    self.Discard = []
+    self.Players = []
+    self.Vote = null
+    self.Actions = []
+    for elem in data.split(";")
+        if elem.len <= 0 then continue
+        parts = elem.split("=")
+        if parts.len != 2 then exit("Bad marshall format (2," + elem + ").")
+        if parts[0] == "T" then
+            self.Turn = parseNum(parts[1], "T")
+            continue
+        end if
+        if parts[0] == "S" then
+            self.Suit = parts[1]
+            continue
+        end if
+        if parts[0] == "O" then
+            self.PlayDirection = parseNum(parts[1], "O")
+            continue
+        end if
+        if parts[0] == "C" then
+            for idx in range (1, parseNum(parts[1], "C"))
+                self.Players.push({"Name": "?", "Index": idx-1, "Score": 0, "Hand": [], "Vote": -1})
+            end for
+            continue
+        end if
+        if parts[0] == "D" then
+            self.Deck.push(parseCard(parts[1], "D"))
+            continue
+        end if
+        if parts[0] == "I" then
+            self.Discard.push(parseCard(parts[1], "I"))
+            continue
+        end if
+        if parts[0] == "Vt" then
+            // must be first
+            self.Vote = {"Type": parts[1], "Player": -1, "Options": []}
+            continue
+        end if
+        if parts[0] == "Vp" then
+            if self.Vote == null then exit("Bad marshall format (6).")
+            self.Vote.Player = parseNum(parts[1], "Vp")
+            continue
+        end if
+        if parts[0] == "Vo" then
+            if self.Vote == null then exit("Bad marshall format (7).")
+            self.Vote.Options = parts[1].split(",")
+            continue
+        end if
+        if parts[0] == "Vi" then
+            if self.Vote == null then exit("Bad marshall format (8).")
+            self.Vote.Index = parseNum(parts[1], "Vi")
+            continue
+        end if
+        if parts[0][0] != "P" then exit("Bad marshall format (1).")
+        playerBits = parts[0][1:].split(",")
+        if playerBits.len != 2 then exit("Bad marshall format (4).")
+        playerIndex = parseNum(playerBits[0], "P0")
+        if playerIndex < 0 or playerIndex >= self.Players.len then exit("Bad marshall format (5).")
+        player = self.Players[playerIndex]
+        if playerBits[1] == "N" then
+            player.Name = parts[1]
+            continue
+        end if
+        if playerBits[1] == "S" then
+            player.Score = parseNum(parts[1], "PS")
+            continue
+        end if
+        if playerBits[1] == "H" then
+            player.Hand.push(parseCard(parts[1], "H"))
+            continue
+        end if
+        if playerBits[1] == "V" then
+            player.Vote = parseNum(parts[1], "PV")
+            continue
+        end if
+        exit("Bad marshall format (10).")
+    end for
+end function
+
+// ====================================================================
+// Game Controller
+
+GameController = {}
+GameController.ctor = function(state, lib)
+    ret = new GameController
+    ret.lib = lib
+    ret.state = state
+    ret.cmdPhase = null
+    return ret
+end function
+
+// GameController.PlayerName The name of the player owning the controller.
+GameController.PlayerName = function()
+    return self.lib.PlayerName
+end function
+
+// GameController.PlayerTurn The name of the player whose turn it is.
+GameController.PlayerTurn = function()
+    turn = self.state.Turn
+    for player in self.state.Players
+        if player.Index == turn then return player.Name
+    end for
+    return "?"
+end function
+
+// GameController.Step Check user input and check for state updates.
+//
+// Returns null on no update, or a request to perform some special action.
+GameController.Step = function()
+    self.newMessages()
+    special = self.nextInput()
+    self.checkState()
+    return special
+end function
+
+// GameController.nextInput Hande the next user command.
+//
+// For both guests and host, the command is handled the same - post a message.
+// The host will end up reading its own file.
+GameController.nextInput = function()
+    cmd = self.lib.NextCommand()
+    if cmd[0] == 2 then
+        self.postMsg("emote", "left the game.")
+        exit("Leaving the game.")
+    end if
+    if cmd[0] == 1 then return "<color=#ff2020>Ensure command window is in line mode.</color>"
+    text = cmd[1]
+    if text == null then return null
+    if text == "?" or text == "help" then return "!help"
+    if text[0] == ":" then
+        self.postMsg("msg", text[1:])
+        return null
+    end if
+    if text[0] == "/" then
+        pos = text.indexOf(" ")
+        if pos == null then
+            action = text[1:]
+            obj = ""
+        else
+            action = text[1:pos]
+            obj = text[pos+1:]
+        end if
+        if action == "help" or action == "?" then return "!help"
+        if action == "emote" then
+            self.postMsg("emote", text[1:])
+            return null
+        end if
+        if action == "vote" then
+            if self.state.Vote == null then
+                return "<color=#ff2020>No vote is in progress.</color>"
+            end if
+            idx = obj.to_int
+            if idx isa number and self.state.Vote.Options.hasIndex(idx) then
+                self.postCmd("vote", obj)
+                return null
+            else
+                return "<color=#ff2020>Invalid vote option '" + obj + "'.</color>"
+            end if
+        end if
+        if action == "kick" then
+            self.postMsg("kick", obj)
+            return null
+        end if
+        if action == "force-skip" then
+            self.postMsg("skip", obj)
+            return null
+        end if
+        if action == "force-draw" then
+            self.postMsg("draw", obj)
+            return null
+        end if
+        return [null, "Unknown action '/" + action + "'.  Use '/?' for help."]
+    end if
+    // TODO this should be playing a command.  That means posting a message.
+    return "<color=#ff2020>Unknown action " + text
+end function
+
+// GameController.newMessages Get the latest text messages from the players.  Loads into the state.
+GameController.newMessages = function()
+    ret = []
+    for player in self.lib.PlayerOrder
+        if player != self.lib.PlayerName then
+            for item in self.lib.NewMessagesFrom(player)
+                ret.push([item[0], item[1], item[2], player])
+            end for
+        end if
+    end for
+    GameLib.QuickSort(ret, @GameLib__string3AscOrder)
+    for item in ret
+        action = "msg"
+        text = item[1]
+        pos = text.indexOf("|")
+        if pos != null then
+            action = text[:pos]
+            text = text[pos+1:]
+        end if
+        self.state.Messages.push([item[0], item[3], action, text])
+    end for
+    if self.state.Messages.len > MAX_MESSAGE_COUNT then
+        self.state.Messages = self.state.Messages[-MAX_MESSAGE_COUNT:]
+    end if
+    for item in self.lib.NewMessagesFrom(".actions")
+        text = item[1]
+        pos = text.indexOf("|")
+        if pos != null then
+            self.state.Actions.push([item[0], text[:pos], text[pos+1:]])
+        end if
+        if self.state.Actions.len > MAX_ACTION_COUNT then
+            self.state.Actions = self.state.Actions[-MAX_ACTION_COUNT:]
+        end if
+    end for
+end function
+
+// GameController.checkState Check the game state for changes.
+// Returns true on game state change.
+// Abstract function
+// GameController.checkState = function()
+
+// 
+GameController.postCmd = function(action, object)
+    self.lib.Post(str(self.state.Turn) + "|" + action + "|" + object, self.lib.PlayerName + ".cmd.txt")
+end function
+
+// 
+GameController.postMsg = function(action, text)
+    self.lib.Post(action + "|" + text)
+end function
+
+// get commands posted by players.  This matters for things like starting a vote, voting, or some other action.
+// The returned value is a map of player -> list of [turn, action, object]
+GameController.nextCmds = function()
+    ret = {}
+    for player in self.lib.PlayerOrder
+        values = []
+        for item in self.lib.NewMessagesFrom(player + ".cmd.txt")
+            parts = item[1].split("|")
+            if parts.len == 3 then
+                turn = parts[0].to_int
+                if turn isa number then
+                    values.push([turn, parts[1], parts[2]])
+                end if
+            end if
+        end for
+        ret[player] = values
+    end for
+    return ret
+end function
+
+// --------------------------------------------------------------------
+// Host version of the controller
+
+HostController = {}
+HostController.New = function(lib)
+    // Performs the whole startup stuff.
+    state = GameState.NewHost(lib.PlayerOrder)
+    ret = GameController.ctor(state, lib)
+    ret.checkState = @HostController.checkState
+
+    lib.Post(state.Marshall(), ".state")
+    ret.postMsg("emote", "started the game.")
+
+    onWait = function(remaining)
+        print("Waiting on " + remaining.len + " players to join (" + remaining + ").")
+        wait(0.5)
+    end function
+
+    if lib.WaitForPlayers(@onWait) then exit("Players did not start in time.  Aborting.")
+    return ret
+end function
+
+HostController.checkState = function()
+    stateChanged = false
+    perPlayerCmds = self.nextCmds()
+    currentTurn = self.state.Turn
+    advanceTurn = false
+    doSkip = false
+    doReverse = false
+    forceDraw = 0
+    for player in self.state.Players
+        if perPlayerCmds.hasIndex(player.Name) then
+            for cmd in perPlayerCmds[player.Name]
+                if cmd[0] != currentTurn then continue
+
+                if cmd[1] == "vote" then
+                    // TODO move this into the state.
+                    if self.state.Vote != null then
+                        option = cmd[2].to_int
+                        if option isa number and option >= 0 and option < self.state.Vote.Options.len then
+                            // TODO Mark the player as having voted.
+                            // TODO if all but 1 player has voted on this, then resolve it.
+                        end if
+                    end if
+                    continue
+                end if
+                if cmd[1] == "kick" or cmd[1] == "skip" or cmd[1] == "draw" then
+                    // Start a vote on an action against a player.
+                    // TODO Ensure that a vote isn't active.
+
+                    // TODO Change the state to be calling for a vote
+                    // TODO force all player votes to the unvoted state (person calling the vote
+                    //      will have an auto-vote for the 'positive' value).
+
+                    continue
+                end if
+                if cmd[1] == "play" and cmd[2].len == 2 then
+                    if player.Index == currentTurn then
+                        // The action might be a card to play.
+                        card = cmd[2]
+                        cardSuit = card[0]
+                        if cardSuit == "w" or cardSuit == "4" then
+                            // TODO Wild Draw 4 has a special meaning in that it is only playable if the
+                            // player doesn't have the corresponding suit color.
+                            cardNumber = "*"
+                            newSuit = card[1]
+                            if "rgby".indexOf(newSuit) == null then
+                                // Nope.
+                                continue
+                            end if
+                        else
+                            cardNumber = card[1]
+                            newSuit = self.state.Suit
+                            if cardSuit != newSuit then
+                                // Nope.
+                                continue
+                            end if
+                        end if
+                        if self.state.PlayerDiscard(player.Name, cardSuit, cardNumber) then
+                            // Does not have the card.
+                            continue
+                        end if
+                        // Played the card.
+                        if player.Hand.len <= 0 then
+                            // End of game.
+                            self.state.recordAction(player.Name, "won the hand!")
+                            // TODO record score
+                            //   - all points in other players' hands to to the winner.
+                            self.state.StartNewHand()
+                            stateChanged = true
+                            continue
+                        end if
+
+                        self.state.Suit = newSuit
+                        if cardSuit == "4" then
+                            forceDraw = 4
+                        else if cardNumber == "t" then
+                            forceDraw = 2
+                        else if cardNumber == "r" then
+                            // TODO if 2 player, this is a skip.
+                            doReverse = true
+                        else if cardNumber == "s" then
+                            doSkip = true
+                        end if
+                        advanceTurn = true
+                    end if
+                    // else the person requesting the play isn't on their turn.
+                    continue
+                end if
+
+                // This is an unknown command.
+            end for
+        end if
+    end for
+
+    if advanceTurn then
+        self.state.AdvanceTurn(doSkip, doReverse)
+        self.state.PlayerDrawCard(null, forceDraw)
+        stateChanged = true
+    end if
+    for action in self.state.pendingActions
+        self.lib.Post(action.Player + "|" + action.Action, ".actions")
+    end for
+    self.state.pendingActions = []
+
+    if stateChanged then
+        self.lib.Post(state.Marshall(), ".state")
+    end if
+    return stateChanged
+end function
+
+// --------------------------------------------------------------------
+// Guest version of the controller
+
+GuestController = {}
+GuestController.New = function(lib)
+    // Performs the whole startup stuff.
+
+    // ... internal knowledge.  Not nice.
+    // However, before the new instance is created where the nice knowledge can be used,
+    // the player must post to their file.
+    lib.Post("emote|joined the game.")
+
+    print("Waiting on host state")
+    marshalledState = lib.NewMessagesFrom(".state")
+    expires = time() + START_TIMEOUT
+    while marshalledState.len <= 0 and time() < expires
+        wait(0.5)
+        marshalledState = lib.NewMessagesFrom(".state")
+    end while
+    if marshalledState.len <= 0 then
+        exit("Timed out waiting on host to start the game.  Aborting.")
+    end if
+    state = GameState.NewGuest(marshalledState[-1][1])
+
+    ret = GameController.ctor(state, lib)
+    ret.checkState = @GuestController.checkState
+    ret.postMsg("emote", "is ready to play.")
+
+    return ret
+end function
+
+GuestController.checkState = function()
+    marshalled = self.lib.NewMessagesFrom(".state")
+    if marshalled.len > 0 then
+        self.state.Unmarshall(marshalled[-1][1])
+        return true
+    end if
+    return false
+end function
+
+// ====================================================================
+// Game View
+
+GameView = {}
+GameView.New = function(controller)
+    ret = new GameView
+    ret.state = controller.state
+    ret.controller = controller
+    return ret
+end function
+
+alignL = function(val, cols)
+    ret = str(val)
+    while ret.len < cols
+        ret = ret + " "
+    end while
+    return ret
+end function
+
+alignR = function(val, cols)
+    ret = str(val)
+    while ret.len < cols
+        ret = " " + ret
+    end while
+    return ret
+end function
+
+// GameView.Step Draw the screen and read user input.
+GameView.Step = function()
+    header = ""
+
+    special = self.controller.Step()
+    if special == "!help" then
+        header = "<b>Help:</b>" + LF + "<b>Commands allowed:</b>" + LF
+        header = header + " <color=#20ff20>/exit</color>    <color=#808080>Quit the game.</color>" + LF
+        header = header + " <color=#20ff20>/kick (name)</color>    <color=#808080>Start a vote to forcibly remove the player.</color>" + LF
+        header = header + " <color=#20ff20>/force-skip (name)</color>    <color=#808080>Start a vote to forcibly skip the player's turn.</color>" + LF
+        header = header + " <color=#20ff20>/force-draw (name)</color>    <color=#808080>Start a vote to force the player to draw a card.</color>" + LF
+        header = header + " <color=#20ff20>/vote (number)</color>    <color=#808080>Submit a choice for the given vote.</color>" + LF
+        header = header + " <color=#20ff20>/emote (text)</color>    <color=#808080>Send an 'emote' message.</color>" + LF
+        header = header + " <color=#20ff20>:(text)</color>    <color=#808080>Send a normal message.</color>" + LF
+    else if special != null then
+        header = special
+    end if
+
+    screen = ""
+
+    // Draw other players.  2 per row.
+    screen = screen + "<color=#ffff00>Players:</color>" + LF
+    line = ""
+    me = null
+    for idx in self.state.Players.indexes
+        player = self.state.Players[idx]
+        if player.Name == self.controller.PlayerName then
+            me = player
+        else
+            line = line + "<color=#ff00ff>" + alignR(player.Name, 12) + "</color>: cards=" + alignR(player.Hand.len, 2) + "; score=" + alignR(player.Score, 3)
+            if idx % 2 == 0 then
+                line = alignL(line, 35)
+            else
+                screen = screen + line + LF
+                line = ""
+            end if
+        end if
+    end for
+    if line.len > 0 then
+        screen = screen + line + LF
+    end if
+    if me == null then exit("You are not in the list of players for the game.  Aborting.")
+    screen = screen + LF
+
+    // Draw hand.  If it's the current player's turn, then draw selection stuff, too.
+    // No sorting.  Just a growing, growing list.
+    screen = screen + "<color=#ffff00>Hand:"
+    for idx in me.Hand.indexes
+        card = me.Hand[idx]
+        if idx % 6 == 0 then
+            screen = screen + LF
+        else
+            screen = screen + "  "
+        end if
+        if card.Number == "s" then
+            screen = screen + card.Suit.upper + "-Skip "
+        else if card.Number == "r" then
+            screen = screen + card.Suit.upper + "-Rev  "
+        else if card.Number == "t" then
+            screen = screen + card.Suit.upper + "-Draw2"
+        else if card.Suit == "w" then
+            screen = screen + "Wild   "
+        else if card.Suit == "4" then
+            screen = screen + "W-Draw4"
+        else
+            screen = screen + card.Suit.upper + "-" + card.Number + "    "
+        end if
+    end for
+    screen = screen + LF
+
+    // TODO draw top discard pile and the current suit and the next player (based on 'PlayDirection').
+
+    // Draw vote.
+    // TODO if the player has already voted, mark it.
+    if self.state.Vote != null then
+        screen = screen + "<color=#ffff00><b>Vote In Progress!</b>" + LF + "<b>" + self.state.Vote.Type
+        if self.state.Vote.Player != null then screen = screen + " " + self.state.Vote.Player
+        screen = screen + LF + "<i>Vote by typing '/vote (option number)'</i>" + LF
+        for idx in self.state.Vote.Options.indexes
+            screen = screen + " " + idx + ". " + self.state.Vote.Options[idx] + LF
+        end for
+        screen = screen + LF
+    end if
+
+    // Draw messages.
+    start = self.state.Messages.len - 6  // Magic display number
+    if start < 0 then start = 0
+    screen = screen + "<color=#ffff00>Messages:" + LF
+    if start < self.state.Messages.len then
+        for idx in range(start, self.state.Messages.len - 1)
+            msg = self.state.Messages[idx]
+            name = msg[1]
+            action = msg[2]
+            text = msg[3].replace("</noparse>", "!/noparse!")
+            if action == "emote" then
+                screen = screen + "<i><color=#ff00ff>" + name + "</color> <noparse>" + text + "</noparse></i>" + LF
+            else
+                screen = screen + "<color=#ff00ff>" + name + "</color>: <noparse>" + text + "</noparse>" + LF
+            end if
+        end for
+    end if
+
+    // Draw actions.
+    start = self.state.Actions.len - 5  // Magic display number
+    if start < 0 then start = 0
+    if start < self.state.Actions.len then
+        screen = screen + "<color=#ffff00>Actions:" + LF
+        for idx in range(start, self.state.Actions.len - 1)
+            msg = self.state.Actions[idx]
+            screen = screen + "<color=#ff00ff>" + msg[0] + "</color> " + msg[1] + LF
+        end for
+    end if
+
+    screen = screen + header + LF + "Current player turn: " + self.controller.PlayerTurn + LF
+    if self.controller.PlayerTurn == self.controller.PlayerName then
+        screen = screen + "  <i><b>That means you.</b></i>" + LF
+    end if
+    print(screen, 1)
+end function
+
+
+// ====================================================================
+// Main Game
+
+main = function()
+    lib = GameLib.New()
+    if lib.IsHost then
+        controller = HostController.New(lib)
+    else
+        controller = GuestController.New(lib)
+    end if
+    view = GameView.New(controller)
+
+    while true
+        view.Step()
+        wait(0.201)
+    end while
+end function
+
+if locals == globals then main()

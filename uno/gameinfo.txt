@@ -1,0 +1,5 @@
+name=Uno
+desc=The '80s classic party card game
+min-players=2
+max-players=8
+client=uno.src

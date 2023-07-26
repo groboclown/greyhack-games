@@ -1,0 +1,4 @@
+<color=#00a0a0>Uno
+<color=#20a020>A clone of Uno
+
+A multiplayer card game.  Be the first player to have zero cards left in your hand!

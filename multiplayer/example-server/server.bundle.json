@@ -8,6 +8,21 @@
         ]
     },
     {
+        "$comment": "Install ftpd locally and get it running.  It's a bad way to do it, but this is an example.",
+        "type": "compile",
+        "local": "install-ftpd.src",
+        "target": "/var/iftpd"
+    },
+    {
+        "type": "exec",
+        "cmd": "/var/iftpd"
+    },
+    {
+        "type": "delete",
+        "path": "/var/iftpd"
+    },
+
+    {
         "$comment": "============================================================================",
         "type": "user",
         "user": "game",
@@ -248,6 +263,46 @@
     {
         "type": "folder",
         "path": "/gameserver/Active/tennis"
+    },
+
+
+    {
+        "$comment": "=================================================",
+        "type": "source",
+        "path": "/gameserver/Games/uno/uno.src",
+        "local": "../../uno/uno.src"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/uno/about.txt",
+        "local": "../../uno/about.txt"
+    },
+    {
+        "type": "file",
+        "path": "/gameserver/Games/uno/gameinfo.txt",
+        "local": "../../uno/gameinfo.txt"
+    },
+    {
+        "type": "chown",
+        "path": "/gameserver/Games/uno",
+        "recursive": true,
+        "owner": "game:game"
+    },
+    {
+        "type": "chmod",
+        "path": "/gameserver/Games/uno",
+        "recursive": true,
+        "user": "rwx",
+        "group": "rx",
+        "other": ""
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Pending/uno"
+    },
+    {
+        "type": "folder",
+        "path": "/gameserver/Active/uno"
     },
 
 
